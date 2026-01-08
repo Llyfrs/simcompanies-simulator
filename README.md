@@ -8,13 +8,14 @@ A Python utility for calculating production profits in Sim Companies using the S
 - **Real-time Data**: Fetches the latest resource data and market VWAPs (Volume Weighted Average Prices) from the Simcotools API.
 - **Profit Calculation**: Calculates hourly profit by accounting for:
   - Selling price (at specific quality levels).
-  - 4% market exchange fee.
+  - 4% market exchange fee (0% in direct contract mode).
   - Production wages.
   - Administrative Overhead costs.
   - Input material costs.
-  - Transportation costs.
+  - Transportation costs (50% reduction in direct contract mode).
 - **Data Persistence**: Automatically saves fetched API data to `resources.json` and `vwaps.json` for inspection.
 - **Search & Filter**: Search for specific resources or filter calculations by a target quality level.
+- **Direct Contract Mode**: Support for calculating profits when trading directly with other players.
 
 ## Installation
 
@@ -40,6 +41,7 @@ uv run main.py [options]
 - `-S`, `--search`: Search for a specific resource by name (case-insensitive).
 - `-A`, `--abundance`: Specify the abundance percentage (0-100) for mine and well resources (default: `90`).
 - `-O`, `--admin-overhead`: Specify administration overhead percentage to add to wages (default: `0`).
+- `-C`, `--contract`: Calculate values for direct contracts (0% market fee, 50% transportation cost).
 
 ### Examples
 
@@ -56,6 +58,11 @@ uv run main.py -Q 2
 **Search for "Electric" related resources at Quality 1:**
 ```bash
 uv run main.py -S Electric -Q 1
+```
+
+**Calculate direct contract profits (0% fee, 50% transport):**
+```bash
+uv run main.py --contract
 ```
 
 ## Output Explanation

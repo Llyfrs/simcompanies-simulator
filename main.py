@@ -80,6 +80,7 @@ def main():
     parser.add_argument("-S", "--search", type=str, help="Search for a specific resource by name (case-insensitive)")
     parser.add_argument("-A", "--abundance", type=float, default=90, help="Abundance percentage for mine/well resources (default: 90)")
     parser.add_argument("-O", "--admin-overhead", type=float, default=0, help="Administration overhead percentage to add to wages (default: 0)")
+    parser.add_argument("-C", "--contract", action="store_true", help="Calculate values for direct contracts (0% market fee, 50% transportation cost)")
     args = parser.parse_args()
 
     # Load abundance resources
@@ -185,10 +186,13 @@ def main():
             # 3. Transportation costs (per unit and per hour)
             # Market fee is usually 3%, but transport is a direct cost to sell
             transport_cost_per_unit = transport_units_needed * transport_price
+            if args.contract:
+                transport_cost_per_unit *= 0.5
             transport_costs_per_hour = transport_cost_per_unit * produced_per_hour
             
-            # 4. Market Fee (4% of revenue)
-            market_fee_per_hour = revenue_per_hour * 0.04
+            # 4. Market Fee (4% of revenue, 0% for contracts)
+            market_fee_percentage = 0.04 if not args.contract else 0.0
+            market_fee_per_hour = revenue_per_hour * market_fee_percentage
 
             # 5. Total profit per hour
             # Profit = Revenue - Fee - Wages - Admin Overhead - Input Costs - Transport Costs
@@ -209,9 +213,12 @@ def main():
         profits.sort(key=lambda x: x["profit_per_hour"], reverse=True)
 
         header_title = f"Top 30 Most Profitable Resources" if not args.search else f"Search results for '{args.search}'"
+        if args.contract:
+            header_title += " (Direct Contract Mode)"
         
         console.print(f"\n[bold blue]{header_title}[/bold blue]")
-        console.print(f"Quality: [bold cyan]{args.quality}[/bold cyan] | Transport: [bold cyan]${transport_price:.3f}[/bold cyan] | Market Fee: [bold cyan]4%[/bold cyan] | Admin Overhead: [bold cyan]{args.admin_overhead}%[/bold cyan]")
+        market_fee_display = "0%" if args.contract else "4%"
+        console.print(f"Quality: [bold cyan]{args.quality}[/bold cyan] | Transport: [bold cyan]${transport_price:.3f}[/bold cyan] | Market Fee: [bold cyan]{market_fee_display}[/bold cyan] | Admin Overhead: [bold cyan]{args.admin_overhead}%[/bold cyan]")
 
         table = Table(show_header=True, header_style="bold white on blue", box=box.ROUNDED, border_style="bright_black")
         table.add_column("Resource", style="bold white", width=25)

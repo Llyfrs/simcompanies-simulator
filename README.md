@@ -4,6 +4,7 @@ A Python utility for calculating production profits in Sim Companies using the S
 
 ## Features
 
+- **Rich UI**: Uses the `rich` library for beautiful tables, colors, progress indicators, and formatted logs.
 - **Real-time Data**: Fetches the latest resource data and market VWAPs (Volume Weighted Average Prices) from the Simcotools API.
 - **Profit Calculation**: Calculates hourly profit by accounting for:
   - Selling price (at specific quality levels).
@@ -59,17 +60,17 @@ uv run main.py -S Electric -Q 1
 
 ## Output Explanation
 
-The tool displays a table with the following columns:
-- **Resource**: Name of the produced item. An `(*)` indicates it is an abundance-based resource (Mine/Well).
-- **Profit/hr**: Net profit per hour after all costs (including abundance adjustments and market fee).
-- **Revenue/hr**: Gross income per hour from sales.
-- **Fee/hr**: 4% market exchange fee.
-- **Costs/hr**: Combined cost of wages (including admin overhead) and input materials.
-- **Transp/hr**: Total transportation costs.
+The tool displays a formatted table using `rich` with the following columns:
+- **Resource**: Name of the produced item (**bold white**). A yellow `(*)` indicates it is an abundance-based resource (Mine/Well).
+- **Profit/hr**: Net profit per hour. Highlighted in **green** if positive and **red** if negative.
+- **Revenue/hr**: Gross income per hour from sales (**white**).
+- **Fee/hr**: 4% market exchange fee (**red**).
+- **Costs/hr**: Combined cost of wages (including admin overhead) and input materials (**yellow**).
+- **Transp/hr**: Total transportation costs (**magenta**). A red `(!)` indicates missing input prices.
 
-### Warning Flags
-- `(*)`: Indicates abundance-based resource (e.g., Bauxite, Crude oil, etc.). The production rate is multiplied by the abundance percentage.
-- `(!)`: Indicates that one or more input materials for that resource do not have a market price at the specified quality level, which may result in inaccurate profit calculations.
+### Indicators & Warnings
+- **Yellow (*)**: Indicates abundance-based resource (e.g., Bauxite, Crude oil, etc.). The production rate is multiplied by the abundance percentage.
+- **Red (!)**: Indicates that one or more input materials for that resource do not have a market price at the specified quality level, which may result in inaccurate profit calculations.
 
 ## Data Files
 

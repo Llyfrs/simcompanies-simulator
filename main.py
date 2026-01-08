@@ -2,6 +2,13 @@ import httpx
 import json
 import argparse
 import os
+from rich.console import Console
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.panel import Panel
+from rich import box
+
+console = Console()
 
 class SimcoAPI:
     def __init__(self, realm: int = 0):
@@ -12,62 +19,60 @@ class SimcoAPI:
         url = f"{self.base_url}/resources"
         all_resources = []
         
-        # Try disable_pagination=True first
-        print(f"Fetching resources from {url} (attempting disable_pagination=True)...")
-        try:
-            response = httpx.get(url, headers=self.headers, params={"disable_pagination": "True"})
-            response.raise_for_status()
-            data = response.json()
-            
-            # If disable_pagination worked, it might return a list or a dict with all resources
-            if isinstance(data, list):
-                return {"resources": data}
-            if isinstance(data, dict) and "resources" in data:
-                # Check if totalRecords matches len(resources)
-                metadata = data.get("metadata", {})
-                total_records = metadata.get("totalRecords")
-                if total_records is not None and len(data["resources"]) >= total_records:
-                    print(f"Successfully fetched all {len(data['resources'])} resources with disable_pagination.")
-                    return data
-        except Exception as e:
-            print(f"disable_pagination failed or returned unexpected format: {e}")
+        with console.status("[bold green]Fetching resources...", spinner="dots"):
+            # Try disable_pagination=True first
+            try:
+                response = httpx.get(url, headers=self.headers, params={"disable_pagination": "True"})
+                response.raise_for_status()
+                data = response.json()
+                
+                # If disable_pagination worked, it might return a list or a dict with all resources
+                if isinstance(data, list):
+                    return {"resources": data}
+                if isinstance(data, dict) and "resources" in data:
+                    # Check if totalRecords matches len(resources)
+                    metadata = data.get("metadata", {})
+                    total_records = metadata.get("totalRecords")
+                    if total_records is not None and len(data["resources"]) >= total_records:
+                        console.log(f"Fetched all {len(data['resources'])} resources with disable_pagination.")
+                        return data
+            except Exception as e:
+                console.log(f"[yellow]disable_pagination failed, falling back to manual pagination: {e}[/yellow]")
 
-        # Fallback to manual pagination
-        print("Falling back to manual pagination...")
-        current_page = 1
-        last_page = 1
-        
-        while current_page <= last_page:
-            print(f"  Fetching page {current_page}...")
-            response = httpx.get(url, headers=self.headers, params={"page": current_page})
-            response.raise_for_status()
-            data = response.json()
+            # Fallback to manual pagination
+            current_page = 1
+            last_page = 1
             
-            resources = data.get("resources", [])
-            all_resources.extend(resources)
-            
-            metadata = data.get("metadata", {})
-            current_page = metadata.get("currentPage", 1) + 1
-            last_page = metadata.get("lastPage", 1)
-            
-        print(f"Successfully fetched {len(all_resources)} resources via manual pagination.")
-        return {"resources": all_resources}
+            while current_page <= last_page:
+                response = httpx.get(url, headers=self.headers, params={"page": current_page})
+                response.raise_for_status()
+                data = response.json()
+                
+                resources = data.get("resources", [])
+                all_resources.extend(resources)
+                
+                metadata = data.get("metadata", {})
+                current_page = metadata.get("currentPage", 1) + 1
+                last_page = metadata.get("lastPage", 1)
+                
+            console.log(f"Fetched {len(all_resources)} resources via manual pagination.")
+            return {"resources": all_resources}
 
     def get_market_vwaps(self):
         url = f"{self.base_url}/market/vwaps"
-        print(f"Fetching market VWAPs from {url}...")
-        response = httpx.get(url, headers=self.headers)
-        response.raise_for_status()
-        data = response.json()
-        # If the API returns a dict with a key like 'vwaps'
-        if isinstance(data, dict) and "vwaps" in data:
-            return data["vwaps"]
-        return data
+        with console.status("[bold green]Fetching market VWAPs...", spinner="dots"):
+            response = httpx.get(url, headers=self.headers)
+            response.raise_for_status()
+            data = response.json()
+            # If the API returns a dict with a key like 'vwaps'
+            if isinstance(data, dict) and "vwaps" in data:
+                return data["vwaps"]
+            return data
 
 def save_json(data, filename):
     with open(filename, "w") as f:
         json.dump(data, f, indent=2)
-    print(f"Data saved to {filename}")
+    console.log(f"Data saved to [cyan]{filename}[/cyan]")
 
 def main():
     parser = argparse.ArgumentParser(description="Simcotools calculation script")
@@ -119,7 +124,7 @@ def main():
                 if "transport" in res.get("name", "").lower():
                     transport_id = res.get("id")
                     break
-
+        
         transport_price = 0
         if transport_id is not None:
             if isinstance(vwaps_data, list):
@@ -128,7 +133,7 @@ def main():
                         transport_price = entry.get("vwap", 0)
                         break
         else:
-            print("Warning: Could not find 'Transport' resource by name.")
+            console.print("[yellow]Warning: Could not find 'Transport' resource by name.[/yellow]")
         
         profits = []
         resources = resources_data.get("resources", [])
@@ -204,24 +209,43 @@ def main():
         profits.sort(key=lambda x: x["profit_per_hour"], reverse=True)
 
         header_title = f"Top 30 Most Profitable Resources" if not args.search else f"Search results for '{args.search}'"
-        print(f"\n{header_title} per Hour (Quality {args.quality} Only):")
-        print(f"Using Transport price: ${transport_price:.3f} | Market Fee: 4% | Admin Overhead: {args.admin_overhead}%")
-        print("-" * 105)
-        print(f"{'Resource':<25} | {'Profit/hr':>12} | {'Revenue/hr':>12} | {'Fee/hr':>10} | {'Costs/hr':>12} | {'Transp/hr':>10}")
-        print("-" * 105)
+        
+        console.print(f"\n[bold blue]{header_title}[/bold blue]")
+        console.print(f"Quality: [bold cyan]{args.quality}[/bold cyan] | Transport: [bold cyan]${transport_price:.3f}[/bold cyan] | Market Fee: [bold cyan]4%[/bold cyan] | Admin Overhead: [bold cyan]{args.admin_overhead}%[/bold cyan]")
+
+        table = Table(show_header=True, header_style="bold white on blue", box=box.ROUNDED, border_style="bright_black")
+        table.add_column("Resource", style="bold white", width=25)
+        table.add_column("Profit/hr", justify="right")
+        table.add_column("Revenue/hr", justify="right", style="white")
+        table.add_column("Fee/hr", justify="right", style="red")
+        table.add_column("Costs/hr", justify="right", style="yellow")
+        table.add_column("Transp/hr", justify="right", style="magenta")
         
         display_count = 30 if not args.search else len(profits)
         for p in profits[:display_count]:
-            warn = " (!)" if p["missing_input_price"] else ""
-            abundance_mark = " (*)" if p["is_abundance_res"] else ""
-            print(f"{p['name'] + abundance_mark:<25} | ${p['profit_per_hour']:>11.2f} | ${p['revenue_per_hour']:>11.2f} | ${p['market_fee_per_hour']:>9.2f} | ${p['costs_per_hour']:>11.2f} | ${p['transport_costs_per_hour']:>9.2f}{warn}")
+            warn = " [bold red](!)[/bold red]" if p["missing_input_price"] else ""
+            abundance_mark = " [bold yellow](*)[/bold yellow]" if p["is_abundance_res"] else ""
+            
+            profit_style = "bold green" if p["profit_per_hour"] >= 0 else "bold red"
+            
+            table.add_row(
+                f"{p['name']}{abundance_mark}",
+                f"[{profit_style}]${p['profit_per_hour']:,.2f}[/{profit_style}]",
+                f"${p['revenue_per_hour']:,.2f}",
+                f"${p['market_fee_per_hour']:,.2f}",
+                f"${p['costs_per_hour']:,.2f}",
+                f"${p['transport_costs_per_hour']:,.2f}{warn}"
+            )
+        
+        console.print(table)
         
         if any(p["is_abundance_res"] for p in profits[:display_count]):
-            print(f"\n(*) indicates abundance-based resource (applied {args.abundance}% abundance)")
-        print(f"(!) indicates one or more source materials had no Quality {args.quality} market price")
+            console.print(f"\n[bold yellow](*)[/bold yellow] indicates abundance-based resource (applied {args.abundance}% abundance)")
+        if any(p["missing_input_price"] for p in profits[:display_count]):
+            console.print(f"[bold red](!)[/bold red] indicates one or more source materials had no Quality {args.quality} market price")
 
     except httpx.HTTPError as exc:
-        print(f"Error fetching data: {exc}")
+        console.print(f"[bold red]Error fetching data: {exc}[/bold red]")
 
 if __name__ == "__main__":
     main()

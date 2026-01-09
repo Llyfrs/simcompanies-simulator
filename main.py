@@ -125,6 +125,16 @@ def simulate_prospecting(target_abundance, attempt_time, slots=1):
     table.add_row("Expected Blocks", f"{expected_blocks:.2f}")
     table.add_row("Expected Time", f"{expected_time:.2f} hours ({expected_time/24:.2f} days)")
 
+    # Calculate decay time to 85% abundance
+    # Decay is 0.032% per day -> 1 - 0.00032 multiplier
+    decay_target = 0.85
+    decay_rate = 0.00032
+    if target_abundance > decay_target:
+        # 0.85 = target * (1 - rate)^t
+        # t = ln(0.85 / target) / ln(1 - rate)
+        days_to_85 = math.log(decay_target / target_abundance) / math.log(1.0 - decay_rate)
+        table.add_row("Days until 85%", f"{days_to_85:.1f} days")
+
     console.print(table)
 
     # Confidence Intervals

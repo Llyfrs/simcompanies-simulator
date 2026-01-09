@@ -124,6 +124,7 @@ When using the `-P` or `--prospect` flag, the tool displays:
     - **Probability of Success**: The chance of hitting the target in a single attempt.
     - **Expected Attempts**: The average number of attempts needed (1/p).
     - **Expected Time**: The average time required to hit the target.
+    - **Days until 85%**: If target > 85%, shows estimated days until abundance decays to 85% (at 0.032% daily decay).
 - **Confidence Intervals (Time to Success)**:
     - Shows the number of attempts and total time required to be X% sure (50%, 80%, 90%, 95%, 99%) of having found the target abundance.
 

@@ -134,6 +134,86 @@ def calculate_building_roi(
     return roi_data
 
 
+def calculate_level_roi(
+    building: Building,
+    best_profit_data: dict,
+    q0_price_map: dict[int, float],
+    name_to_id: dict[str, int],
+    max_level: int = 20,
+    step_mode: bool = False,
+) -> list[dict]:
+    """Calculate ROI for a single building across multiple levels.
+
+    Args:
+        building: The Building instance.
+        best_profit_data: Profit data for the best resource at level 1.
+        q0_price_map: Map of resource ID to Q0 price for building costs.
+        name_to_id: Map of resource name (lowercase) to resource ID.
+        max_level: Maximum level to calculate up to.
+        step_mode: If True, calculate ROI for each step L -> L+1 based on 
+                   that step's cost and the additional profit gained.
+
+    Returns:
+        List of ROI dictionaries for each level/step.
+    """
+    base_cost, missing_cost = building.calculate_construction_cost(q0_price_map, name_to_id)
+    base_profit = best_profit_data["profit_per_hour"]
+
+    # Ensure building is treated as level 1 for starting point
+    original_level = building.level
+    building.level = 1
+
+    level_roi_data = []
+
+    for level in range(1, max_level + 1):
+        if step_mode:
+            # ROI for the step L -> L+1
+            # Cost = L * base_cost
+            # Gained Profit = (L+1 - L) * base_profit = base_profit
+            if level == 1:
+                # Level 1 is the initial construction
+                cost = base_cost
+                gained_daily_profit = base_profit * 24
+                display_label = "Initial"
+            else:
+                # Upgrade step from level-1 to level
+                # Step cost from k to k+1 is k * base_cost. 
+                # So to reach 'level' from 'level-1', cost is (level-1) * base_cost
+                cost = (level - 1) * base_cost
+                gained_daily_profit = base_profit * 24  # Every level adds exactly 1x base profit
+                display_label = f"Lv{level-1}→{level}"
+        else:
+            # Total investment to reach this level
+            upgrade_cost, _ = building.calculate_upgrade_cost(q0_price_map, level, name_to_id)
+            cost = base_cost + upgrade_cost
+            gained_daily_profit = base_profit * 24 * level
+            display_label = str(level)
+
+        roi_daily = 0.0
+        days_break_even = float("inf")
+
+        if cost > 0:
+            roi_daily = (gained_daily_profit / cost) * 100
+            if gained_daily_profit > 0:
+                days_break_even = cost / gained_daily_profit
+
+        level_roi_data.append(
+            {
+                "building": building.name,
+                "level": display_label,
+                "resource": best_profit_data["name"],
+                "cost": cost,
+                "daily_profit": gained_daily_profit,
+                "roi": roi_daily,
+                "break_even": days_break_even,
+                "missing_cost": missing_cost,
+            }
+        )
+
+    building.level = original_level
+    return level_roi_data
+
+
 def simulate_prospecting(
     target_abundance: float,
     attempt_time: float,

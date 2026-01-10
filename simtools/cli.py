@@ -15,6 +15,7 @@ from simtools.calculator import (
     ProfitConfig,
     calculate_all_profits,
     calculate_building_roi,
+    calculate_level_roi,
     simulate_prospecting,
 )
 from simtools.models.building import Building, build_resource_to_building_map
@@ -228,6 +229,9 @@ def display_roi_table(roi_data: list[dict]) -> None:
         box=box.ROUNDED,
     )
     roi_table.add_column("Building", style="bold white")
+    if roi_data and "level" in roi_data[0]:
+        col_name = "Step/Lv" if any("→" in str(d.get("level", "")) for d in roi_data) else "Lv"
+        roi_table.add_column(col_name, justify="right", style="cyan")
     roi_table.add_column("Best Resource", style="cyan")
     roi_table.add_column("Building Cost", justify="right", style="magenta")
     roi_table.add_column("Daily Profit", justify="right", style="green")
@@ -244,14 +248,21 @@ def display_roi_table(roi_data: list[dict]) -> None:
 
         warn = " (!)" if d["missing_cost"] else ""
 
-        roi_table.add_row(
+        row_data = [
             d["building"],
+        ]
+        if "level" in d:
+            row_data.append(str(d["level"]))
+        
+        row_data.extend([
             d["resource"],
             f"${d['cost']:,.0f}{warn}",
             f"${d['daily_profit']:,.0f}",
             f"{d['roi']:.2f}%",
             break_even_str,
-        )
+        ])
+        
+        roi_table.add_row(*row_data)
 
     console.print("\n")
     console.print(roi_table)
@@ -344,6 +355,17 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="Number of simultaneous building slots (default: 1)",
+    )
+    parser.add_argument(
+        "--max-level",
+        type=int,
+        default=20,
+        help="Maximum building level for ROI analysis (default: 20)",
+    )
+    parser.add_argument(
+        "--step-roi",
+        action="store_true",
+        help="Calculate ROI based on individual upgrade steps rather than cumulative investment",
     )
     return parser.parse_args()
 
@@ -493,14 +515,43 @@ def main() -> None:
         profits = calculate_all_profits(filtered_resources, price_map, transport_price, config)
 
         # Display results
-        display_profits_table(
-            profits, transport_price, config, search_terms=args.search, building_terms=args.building
-        )
+        if not (args.roi and args.building):
+            display_profits_table(
+                profits, transport_price, config, search_terms=args.search, building_terms=args.building
+            )
 
         # ROI calculation
         if args.roi and buildings:
-            roi_data = calculate_building_roi(buildings, profits, q0_price_map, name_to_id)
-            display_roi_table(roi_data)
+            if args.building:
+                # Generate level-based ROI for filtered buildings
+                res_profit_map = {p["name"].lower(): p for p in profits}
+                all_roi_data = []
+                for building in buildings:
+                    best_profit = -float("inf")
+                    best_p_data = None
+                    for res_name in building.produces:
+                        res_name_lower = res_name.lower()
+                        if res_name_lower in res_profit_map:
+                            p_data = res_profit_map[res_name_lower]
+                            if p_data["profit_per_hour"] > best_profit:
+                                best_profit = p_data["profit_per_hour"]
+                                best_p_data = p_data
+                    
+                    if best_p_data:
+                        all_roi_data.extend(
+                            calculate_level_roi(
+                                building,
+                                best_p_data,
+                                q0_price_map,
+                                name_to_id,
+                                max_level=args.max_level,
+                                step_mode=args.step_roi,
+                            )
+                        )
+                display_roi_table(all_roi_data)
+            else:
+                roi_data = calculate_building_roi(buildings, profits, q0_price_map, name_to_id)
+                display_roi_table(roi_data)
 
     except Exception as exc:
         console.print(f"[bold red]Error fetching data: {exc}[/bold red]")

@@ -22,9 +22,28 @@ class Building:
     name: str
     cost: dict[str, int] = field(default_factory=dict)
     produces: list[str] = field(default_factory=list)
+    level: int = 1
 
     # Resolved resources (populated after linking with API data)
     _resources: list[Resource] = field(default_factory=list, repr=False)
+
+    @property
+    def production_multiplier(self) -> float:
+        """Get the production multiplier for this building level.
+
+        Returns:
+            Production multiplier (equal to level).
+        """
+        return float(self.level)
+
+    @property
+    def wage_multiplier(self) -> float:
+        """Get the wage multiplier for this building level.
+
+        Returns:
+            Wage multiplier (equal to level).
+        """
+        return float(self.level)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Building":
@@ -40,6 +59,7 @@ class Building:
             name=data.get("name", ""),
             cost=data.get("cost", {}),
             produces=data.get("produces", []),
+            level=data.get("level", 1),
         )
 
     @classmethod
@@ -120,6 +140,38 @@ class Building:
             total_cost += price * amount
 
         return total_cost, missing_price
+
+    def calculate_upgrade_cost(
+        self,
+        prices: dict[str, float],
+        target_level: int,
+        name_to_id: dict[str, int] | None = None,
+    ) -> tuple[float, bool]:
+        """Calculate the cost to upgrade this building to a target level.
+
+        The cost to upgrade from level L to L+1 is L * base_cost.
+        Total cost is the sum of costs for each step.
+
+        Args:
+            prices: Map of resource ID to price (Q0 prices).
+            target_level: Level to upgrade to.
+            name_to_id: Optional map of resource name (lowercase) to resource ID.
+
+        Returns:
+            Tuple of (total_upgrade_cost, missing_price_flag).
+        """
+        if target_level <= self.level:
+            return 0.0, False
+
+        base_cost, missing_price = self.calculate_construction_cost(prices, name_to_id)
+        
+        total_upgrade_cost = 0.0
+        # Calculate cost for each step: current -> current+1, ..., target-1 -> target
+        # Step cost from k to k+1 is k * base_cost
+        for k in range(self.level, target_level):
+            total_upgrade_cost += k * base_cost
+
+        return total_upgrade_cost, missing_price
 
     def produces_resource(self, resource_name: str) -> bool:
         """Check if this building produces a specific resource.

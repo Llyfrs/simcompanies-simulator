@@ -76,6 +76,8 @@ uv run main.py [options]
 - `-P`, `--prospect`: Enable prospecting simulation mode.
 - `-T`, `--time`: Time in hours for one build attempt (default: 12). Uses the abundance set by `-A` as the target.
 - `-L`, `--slots`: Number of simultaneous building slots (default: 1).
+- `--max-level`: Maximum building level for ROI analysis (default: 20). Used when filtering by building with `--roi`.
+- `--step-roi`: Calculate ROI based on individual upgrade steps ($L \to L+1$) rather than cumulative investment. Shows ROI for the *additional* profit gained from that specific upgrade.
 
 ### Examples
 
@@ -141,6 +143,9 @@ If the `-R` or `--roi` flag is used, a second table is displayed showing:
 - **Daily Profit**: Estimated daily profit from producing the best resource (24 hours).
 - **ROI (Daily)**: Return on Investment per day as a percentage.
 - **Break Even**: Estimated number of days to recover the construction cost.
+
+**Level-based ROI Analysis (when using --roi and --building):**
+If the `-B` or `--building` flag is used along with `-R`, the ROI analysis will show levels from 1 up to `--max-level` (default 20) for the filtered building. This helps visualize how profit and investment scale as the building is leveled up.
 
 
 ### Prospecting Simulation Tables (when using --prospect)

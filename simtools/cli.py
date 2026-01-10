@@ -371,6 +371,8 @@ def parse_args() -> argparse.Namespace:
     )
     
     # Add common flags at top level for backwards compatibility
+    # NOTE: These are intentionally duplicated from parent_parser to support
+    # usage without subcommands (e.g., "simtools -a 85" defaults to profit)
     parser.add_argument(
         "-q", "--quality", type=int, default=0, help="Quality level (default: 0)"
     )
@@ -560,7 +562,7 @@ def main() -> None:
 
     # Handle debug commands
     if args.command == "debug":
-        if args.debug_unassigned:
+        if hasattr(args, "debug_unassigned") and args.debug_unassigned:
             # Load data files
             buildings = Building.load_all(get_data_path("buildings.json"))
             resource_to_building = build_resource_to_building_map(buildings)
@@ -583,6 +585,9 @@ def main() -> None:
             except Exception as exc:
                 console.print(f"[bold red]Error fetching data: {exc}[/bold red]")
                 raise
+        else:
+            # No debug option specified, show help
+            console.print("[yellow]No debug option specified. Use -u/--unassigned[/yellow]")
         return
 
     # For all other commands (profit, roi, lifecycle), we need full data

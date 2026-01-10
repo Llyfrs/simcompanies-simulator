@@ -372,7 +372,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--lifecycle",
         action="store_true",
-        help="Calculate lifecycle ROI for abundance resources (decays to 85%)",
+        help="Calculate lifecycle ROI for abundance resources (decays to 85%%)",
     )
     parser.add_argument(
         "-D",

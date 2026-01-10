@@ -1,0 +1,505 @@
+"""Command-line interface for simtools."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from rich import box
+from rich.console import Console
+from rich.table import Table
+
+from simtools.api import SimcoAPI
+from simtools.calculator import (
+    ProfitConfig,
+    calculate_all_profits,
+    calculate_building_roi,
+    simulate_prospecting,
+)
+from simtools.models.building import Building, build_resource_to_building_map
+from simtools.models.resource import Resource
+
+console = Console()
+
+
+def get_data_path(filename: str) -> Path:
+    """Get the path to a data file.
+
+    First checks the simtools/data directory, then falls back to the workspace root.
+
+    Args:
+        filename: Name of the data file.
+
+    Returns:
+        Path to the data file.
+    """
+    # Check package data directory first
+    package_data = Path(__file__).parent / "data" / filename
+    if package_data.exists():
+        return package_data
+
+    # Fall back to workspace root
+    return Path(filename)
+
+
+def load_json_list(filepath: Path) -> list[str]:
+    """Load a JSON file containing a list of strings.
+
+    Args:
+        filepath: Path to the JSON file.
+
+    Returns:
+        List of strings, or empty list if file doesn't exist.
+    """
+    if not filepath.exists():
+        return []
+    with open(filepath, "r") as f:
+        return json.load(f)
+
+
+def save_json(data, filename: str) -> None:
+    """Save data to a JSON file in the workspace root.
+
+    Args:
+        data: Data to save.
+        filename: Name of the output file.
+    """
+    with open(filename, "w") as f:
+        json.dump(data, f, indent=2)
+    console.log(f"Data saved to [cyan]{filename}[/cyan]")
+
+
+def display_prospecting_results(results: dict) -> None:
+    """Display prospecting simulation results.
+
+    Args:
+        results: Results from simulate_prospecting().
+    """
+    if results.get("impossible"):
+        console.print(
+            f"[bold red]Target abundance {results['target_abundance']*100:.1f}% "
+            f"is impossible with the current distribution.[/bold red]"
+        )
+        return
+
+    table_width = 60
+
+    table = Table(
+        title="Prospecting Simulation Results",
+        show_header=True,
+        header_style="bold magenta",
+        box=box.ROUNDED,
+        width=table_width,
+    )
+    table.add_column("Statistic", style="cyan")
+    table.add_column("Value", justify="right", style="green")
+
+    table.add_row("Target Abundance", f"{results['target_abundance']*100:.1f}%")
+    table.add_row("Build Time per Attempt", f"{results['attempt_time']:.1f} hours")
+    table.add_row("Number of Slots", f"{results['slots']}")
+    table.add_row("Prob. Success (Single)", f"{results['p_success_single']*100:.4f}%")
+    table.add_row("Prob. Success (Block)", f"{results['p_success_block']*100:.4f}%")
+    table.add_row("Expected Blocks", f"{results['expected_blocks']:.2f}")
+    table.add_row(
+        "Expected Time",
+        f"{results['expected_time']:.2f} hours ({results['expected_time']/24:.2f} days)",
+    )
+
+    if results.get("days_to_85") is not None:
+        table.add_row("Days until 85%", f"{results['days_to_85']:.1f} days")
+
+    console.print(table)
+
+    # Confidence intervals table
+    conf_table = Table(
+        title="Confidence Intervals (Time to Success)",
+        show_header=True,
+        header_style="bold blue",
+        box=box.ROUNDED,
+        width=table_width,
+    )
+    conf_table.add_column("Confidence Level", style="cyan")
+    conf_table.add_column("Required Blocks", justify="right", style="yellow")
+    conf_table.add_column("Required Time", justify="right", style="green")
+
+    for ci in results["confidence_intervals"]:
+        conf_table.add_row(
+            f"{ci['confidence']*100:.0f}%",
+            f"{ci['blocks']}",
+            f"{ci['time_hours']:.1f}h ({ci['time_days']:.1f}d)",
+        )
+
+    console.print(conf_table)
+
+
+def display_profits_table(
+    profits: list[dict],
+    transport_price: float,
+    config: ProfitConfig,
+    search_terms: list[str] | None = None,
+    building_terms: list[str] | None = None,
+) -> None:
+    """Display the profits table.
+
+    Args:
+        profits: List of profit dictionaries.
+        transport_price: Price per transport unit.
+        config: Profit calculation configuration.
+        search_terms: Search terms used for filtering (for header).
+        building_terms: Building terms used for filtering (for header).
+    """
+    # Build header title
+    header_title = "Top 30 Most Profitable Resources"
+    if search_terms or building_terms:
+        parts = []
+        if search_terms:
+            parts.append(f"search: '{', '.join(search_terms)}'")
+        if building_terms:
+            parts.append(f"building: '{', '.join(building_terms)}'")
+        header_title = f"Results for {' & '.join(parts)}"
+
+    if config.is_contract:
+        header_title += " (Direct Contract Mode)"
+
+    console.print(f"\n[bold blue]{header_title}[/bold blue]")
+    market_fee_display = "0%" if config.is_contract else "4%"
+    console.print(
+        f"Quality: [bold cyan]{config.quality}[/bold cyan] | "
+        f"Transport: [bold cyan]${transport_price:.3f}[/bold cyan] | "
+        f"Market Fee: [bold cyan]{market_fee_display}[/bold cyan] | "
+        f"Admin Overhead: [bold cyan]{config.admin_overhead}%[/bold cyan]"
+    )
+
+    table = Table(
+        show_header=True,
+        header_style="bold white on blue",
+        box=box.ROUNDED,
+        border_style="bright_black",
+    )
+    table.add_column("Resource", style="bold white", width=25)
+    table.add_column("Profit/hr", justify="right")
+    table.add_column("Revenue/hr", justify="right", style="white")
+    table.add_column("Fee/hr", justify="right", style="red")
+    table.add_column("Costs/hr", justify="right", style="yellow")
+    table.add_column("Transp/hr", justify="right", style="magenta")
+
+    display_count = 30 if not search_terms else len(profits)
+    for p in profits[:display_count]:
+        warn = " [bold red](!)[/bold red]" if p["missing_input_price"] else ""
+        abundance_mark = " [bold yellow](*)[/bold yellow]" if p["is_abundance_res"] else ""
+
+        profit_style = "bold green" if p["profit_per_hour"] >= 0 else "bold red"
+
+        table.add_row(
+            f"{p['name']}{abundance_mark}",
+            f"[{profit_style}]${p['profit_per_hour']:,.2f}[/{profit_style}]",
+            f"${p['revenue_per_hour']:,.2f}",
+            f"${p['market_fee_per_hour']:,.2f}",
+            f"${p['costs_per_hour']:,.2f}",
+            f"${p['transport_costs_per_hour']:,.2f}{warn}",
+        )
+
+    console.print(table)
+
+    if any(p["is_abundance_res"] for p in profits[:display_count]):
+        console.print(
+            f"\n[bold yellow](*)[/bold yellow] indicates abundance-based resource "
+            f"(applied {config.abundance}% abundance)"
+        )
+    if any(p["missing_input_price"] for p in profits[:display_count]):
+        console.print(
+            f"[bold red](!)[/bold red] indicates one or more source materials had no "
+            f"Quality {config.quality} market price"
+        )
+
+
+def display_roi_table(roi_data: list[dict]) -> None:
+    """Display the ROI analysis table.
+
+    Args:
+        roi_data: List of ROI dictionaries.
+    """
+    roi_table = Table(
+        title="Building ROI Analysis",
+        show_header=True,
+        header_style="bold green",
+        box=box.ROUNDED,
+    )
+    roi_table.add_column("Building", style="bold white")
+    roi_table.add_column("Best Resource", style="cyan")
+    roi_table.add_column("Building Cost", justify="right", style="magenta")
+    roi_table.add_column("Daily Profit", justify="right", style="green")
+    roi_table.add_column("ROI (Daily)", justify="right", style="bold yellow")
+    roi_table.add_column("Break Even", justify="right", style="white")
+
+    for d in roi_data:
+        if d["break_even"] == float("inf"):
+            break_even_str = "∞"
+        elif d["daily_profit"] < 0:
+            break_even_str = "Never"
+        else:
+            break_even_str = f"{d['break_even']:.1f} days"
+
+        warn = " (!)" if d["missing_cost"] else ""
+
+        roi_table.add_row(
+            d["building"],
+            d["resource"],
+            f"${d['cost']:,.0f}{warn}",
+            f"${d['daily_profit']:,.0f}",
+            f"{d['roi']:.2f}%",
+            break_even_str,
+        )
+
+    console.print("\n")
+    console.print(roi_table)
+    if any(d["missing_cost"] for d in roi_data):
+        console.print(
+            "[yellow](!) Warning: Some building costs calculated with missing "
+            "material prices (assumed $0).[/yellow]"
+        )
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments.
+
+    Returns:
+        Parsed arguments namespace.
+    """
+    parser = argparse.ArgumentParser(description="Simcotools calculation script")
+    parser.add_argument(
+        "-Q", "--quality", type=int, default=0, help="Quality level to calculate for (default: 0)"
+    )
+    parser.add_argument(
+        "-S",
+        "--search",
+        type=str,
+        nargs="+",
+        help="Search for specific resources by name (case-insensitive)",
+    )
+    parser.add_argument(
+        "-B", "--building", type=str, nargs="+", help="Filter resources by building name"
+    )
+    parser.add_argument(
+        "-A",
+        "--abundance",
+        type=float,
+        default=90,
+        help="Abundance percentage for mine/well resources (default: 90)",
+    )
+    parser.add_argument(
+        "-O",
+        "--admin-overhead",
+        type=float,
+        default=0,
+        help="Administration overhead percentage to add to wages (default: 0)",
+    )
+    parser.add_argument(
+        "-C",
+        "--contract",
+        action="store_true",
+        help="Calculate values for direct contracts (0%% market fee, 50%% transportation cost)",
+    )
+    parser.add_argument(
+        "-R",
+        "--roi",
+        action="store_true",
+        help="Calculate and display ROI for buildings based on best performing resource",
+    )
+    parser.add_argument(
+        "-D",
+        "--debug-unassigned",
+        action="store_true",
+        help="List all resources that are not assigned to any building",
+    )
+    parser.add_argument(
+        "-E",
+        "--exclude-seasonal",
+        action="store_true",
+        help="Exclude seasonal resources from calculations",
+    )
+    parser.add_argument(
+        "-P",
+        "--prospect",
+        action="store_true",
+        help="Simulate prospecting to find target abundance",
+    )
+    parser.add_argument(
+        "-T",
+        "--time",
+        type=float,
+        default=12,
+        help="Time in hours for one build attempt (default: 12)",
+    )
+    parser.add_argument(
+        "-L",
+        "--slots",
+        type=int,
+        default=1,
+        help="Number of simultaneous building slots (default: 1)",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Main entry point for the CLI."""
+    args = parse_args()
+
+    # Handle prospecting simulation
+    if args.prospect:
+        results = simulate_prospecting(args.abundance / 100, args.time, args.slots)
+        display_prospecting_results(results)
+        return
+
+    # Load data files
+    abundance_resources = load_json_list(get_data_path("abundance_resources.json"))
+    seasonal_resources = load_json_list(get_data_path("seasonal_resources.json"))
+    buildings = Building.load_all(get_data_path("buildings.json"))
+    resource_to_building = build_resource_to_building_map(buildings)
+
+    # Fetch API data
+    api = SimcoAPI(realm=0)
+
+    try:
+        resources_data = api.get_resources()
+        raw_resources = resources_data.get("resources", [])
+
+        # Handle debug mode
+        if args.debug_unassigned:
+            unassigned = [
+                res.get("name")
+                for res in raw_resources
+                if res.get("name", "").lower() not in resource_to_building
+            ]
+            unassigned.sort()
+            console.print("\n[bold red]Resources not assigned to any building:[/bold red]")
+            for name in unassigned:
+                console.print(f" - {name}")
+            return
+
+        vwaps_data = api.get_market_vwaps()
+
+        # Save API data
+        save_json(resources_data, "resources.json")
+        save_json(vwaps_data, "vwaps.json")
+
+        # Build price maps
+        price_map: dict[int, float] = {}
+        q0_price_map: dict[int, float] = {}
+
+        if isinstance(vwaps_data, list):
+            for entry in vwaps_data:
+                if isinstance(entry, dict):
+                    r_id = entry.get("resourceId")
+                    quality = entry.get("quality")
+                    vwap = entry.get("vwap")
+                    if r_id is not None and vwap is not None:
+                        if quality == args.quality:
+                            price_map[int(r_id)] = vwap
+                        if quality == 0:
+                            q0_price_map[int(r_id)] = vwap
+
+        # Build name to ID map
+        name_to_id = {r.get("name", "").lower(): r.get("id") for r in raw_resources}
+
+        # Get transport price
+        transport_id = None
+        for res in raw_resources:
+            if res.get("name", "").lower() == "transport":
+                transport_id = res.get("id")
+                break
+
+        if transport_id is None:
+            for res in raw_resources:
+                if "transport" in res.get("name", "").lower():
+                    transport_id = res.get("id")
+                    break
+
+        transport_price = 0.0
+        if transport_id is not None:
+            if isinstance(vwaps_data, list):
+                for entry in vwaps_data:
+                    if (
+                        isinstance(entry, dict)
+                        and entry.get("resourceId") == transport_id
+                        and entry.get("quality") == 0
+                    ):
+                        transport_price = entry.get("vwap", 0)
+                        break
+        else:
+            console.print("[yellow]Warning: Could not find 'Transport' resource by name.[/yellow]")
+
+        # Create Resource objects
+        resources = [
+            Resource.from_api_data(
+                data,
+                abundance_resources=[r.lower() for r in abundance_resources],
+                seasonal_resources=[r.lower() for r in seasonal_resources],
+            )
+            for data in raw_resources
+        ]
+
+        # Link resources to buildings
+        resource_by_name = {r.name.lower(): r for r in resources}
+        for building in buildings:
+            building.link_resources(resource_by_name)
+
+        # Set building names on resources
+        for res in resources:
+            building_name = resource_to_building.get(res.name.lower())
+            if building_name:
+                res.building_name = building_name
+
+        # Filter resources
+        filtered_resources = resources
+
+        # Exclude seasonal if requested
+        if args.exclude_seasonal:
+            filtered_resources = [r for r in filtered_resources if not r.is_seasonal]
+
+        # Filter by building
+        if args.building:
+            filtered_resources = [
+                r
+                for r in filtered_resources
+                if r.building_name
+                and any(term.lower() in r.building_name.lower() for term in args.building)
+            ]
+
+        # Filter by search terms
+        if args.search:
+            filtered_resources = [
+                r
+                for r in filtered_resources
+                if any(term.lower() in r.name.lower() for term in args.search)
+            ]
+
+        # Calculate profits
+        config = ProfitConfig(
+            quality=args.quality,
+            abundance=args.abundance,
+            admin_overhead=args.admin_overhead,
+            is_contract=args.contract,
+        )
+
+        profits = calculate_all_profits(filtered_resources, price_map, transport_price, config)
+
+        # Display results
+        display_profits_table(
+            profits, transport_price, config, search_terms=args.search, building_terms=args.building
+        )
+
+        # ROI calculation
+        if args.roi and buildings:
+            roi_data = calculate_building_roi(buildings, profits, q0_price_map, name_to_id)
+            display_roi_table(roi_data)
+
+    except Exception as exc:
+        console.print(f"[bold red]Error fetching data: {exc}[/bold red]")
+        raise
+
+
+if __name__ == "__main__":
+    main()
+

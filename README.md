@@ -18,6 +18,31 @@ A Python utility for calculating production profits in Sim Companies using the S
 - **Direct Contract Mode**: Support for calculating profits when trading directly with other players.
 - **Prospecting Simulation**: Simulate the probability and expected time/attempts to reach a target abundance level in mines/wells using a Gaussian distribution.
 
+## Project Structure
+
+```
+simtools/
+├── __init__.py          # Package exports
+├── models/
+│   ├── __init__.py
+│   ├── building.py      # Building class - production facilities
+│   └── resource.py      # Resource class - producible items
+├── api.py               # SimcoAPI client for fetching game data
+├── calculator.py        # Profit and ROI calculation logic
+├── cli.py               # Command-line interface and display
+└── data/                # Static data files
+    ├── buildings.json
+    ├── abundance_resources.json
+    └── seasonal_resources.json
+main.py                  # Entry point
+```
+
+### Core Classes
+
+- **`Resource`**: Represents a producible item with production rate, wages, inputs, and profit calculation.
+- **`Building`**: Represents a production facility with construction costs and the resources it produces.
+- **`SimcoAPI`**: Client for fetching resource and price data from the Simcotools API.
+
 ## Installation
 
 This project uses [uv](https://github.com/astral-sh/uv) for dependency management.
@@ -130,8 +155,32 @@ When using the `-P` or `--prospect` flag, the tool displays:
 
 ## Data Files
 
-- `resources.json`: Contains raw metadata for all resources (wages, inputs, production rates).
-- `vwaps.json`: Contains the latest market Volume Weighted Average Prices for all resources and qualities.
-- `abundance_resources.json`: List of resources that use the abundance calculation.
-- `seasonal_resources.json`: List of resources that are considered seasonal and can be excluded.
-- `buildings.json`: Contains metadata for buildings, including construction costs and the resources they produce.
+- `resources.json`: Contains raw metadata for all resources (wages, inputs, production rates). Generated from API.
+- `vwaps.json`: Contains the latest market Volume Weighted Average Prices for all resources and qualities. Generated from API.
+- `simtools/data/abundance_resources.json`: List of resources that use the abundance calculation.
+- `simtools/data/seasonal_resources.json`: List of resources that are considered seasonal and can be excluded.
+- `simtools/data/buildings.json`: Contains metadata for buildings, including construction costs and the resources they produce.
+
+## Programmatic Usage
+
+The package can also be imported for programmatic use:
+
+```python
+from simtools import Resource, Building, SimcoAPI
+from simtools.calculator import calculate_all_profits, ProfitConfig
+
+# Fetch data
+api = SimcoAPI(realm=0)
+resources_data = api.get_resources()
+vwaps = api.get_market_vwaps()
+
+# Create resource objects
+resources = [Resource.from_api_data(r) for r in resources_data["resources"]]
+
+# Load buildings
+buildings = Building.load_all()
+
+# Calculate profits
+config = ProfitConfig(quality=0, abundance=90.0)
+profits = calculate_all_profits(resources, price_map, transport_price, config)
+```

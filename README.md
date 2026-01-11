@@ -111,6 +111,14 @@ Various debugging and diagnostic tools.
 **Options:**
 - `-u`, `--unassigned`: List resources not assigned to any building
 
+#### `compare` - Compare market vs contract sales
+Compare selling on the market vs selling via contracts with a custom contract price. Shows side-by-side comparison with profit differences.
+
+**Options:**
+- `-s`, `--search`: Search resources by name (case-insensitive, required)
+- `-p`, `--price`: Contract price per unit (required, accepts floats like 97.5)
+- Plus inherited: `-q`, `-a`, `-r`, `-o`, `-e`
+
 ### Examples
 
 **View top 30 most profitable quality 0 resources with 85% abundance:**
@@ -179,6 +187,26 @@ uv run main.py lifecycle -a 95 -b Mine -t 2
 uv run main.py debug -u
 ```
 
+**Compare selling "Steel" on market vs contract at $97 per unit:**
+```bash
+uv run main.py compare -s steel -p 97
+```
+
+**Compare with quality 3 and 95% abundance:**
+```bash
+uv run main.py compare -s "crude oil" -p 150.50 -q 3 -a 95
+```
+
+**Compare multiple resources at once:**
+```bash
+uv run main.py compare -s steel iron -p 50
+```
+
+**Compare with robots and admin overhead:**
+```bash
+uv run main.py compare -s steel -p 97 -r -o 5
+```
+
 ### Backwards Compatibility
 
 For ease of migration, the tool supports running without specifying a subcommand. When no subcommand is provided, it defaults to the `profit` command. Additionally, common flags (`-q`, `-a`, `-c`, `-r`, `-o`, `-b`, `-s`, `-e`) are available at the top level for backwards compatibility:
@@ -240,6 +268,27 @@ When using the `-P` or `--prospect` flag, the tool displays:
     - **Days until 85%**: If target > 85%, shows estimated days until abundance decays to 85% (at 0.032% daily decay).
 - **Confidence Intervals (Time to Success)**:
     - Shows the number of attempts and total time required to be X% sure (50%, 80%, 90%, 95%, 99%) of having found the target abundance.
+
+### Market vs Contract Comparison Table (when using compare)
+When using the `compare` command, the tool displays a side-by-side comparison:
+
+**Market columns:**
+- **Mkt Price**: Market price from VWAP at the specified quality
+- **Mkt Fee/u**: Market fee per unit (4% of price)
+- **Mkt Trans/u**: Transport cost per unit (100% rate)
+- **Mkt Net/u**: Net profit per unit after all costs
+- **Mkt $/hr**: Total profit per hour
+
+**Contract columns:**
+- **Cnt Price**: User-defined contract price per unit
+- **Cnt Fee/u**: Market fee per unit (always $0.00 for contracts)
+- **Cnt Trans/u**: Transport cost per unit (50% rate)
+- **Cnt Net/u**: Net profit per unit after all costs
+- **Cnt $/hr**: Total profit per hour
+
+**Difference columns:**
+- **Diff/u**: Difference in net profit per unit (Contract - Market). Green if contract is better, red if worse.
+- **Diff/hr**: Difference in profit per hour (Contract - Market). Green if contract is better, red if worse.
 
 ## Data Files
 

@@ -352,6 +352,94 @@ def calculate_lifecycle_roi(
     return results
 
 
+def compare_market_vs_contract(
+    resource: Resource,
+    market_price: float,
+    contract_price: float,
+    input_prices: dict[int, float],
+    transport_price: float,
+    config: ProfitConfig,
+) -> dict:
+    """Compare selling on market vs selling via contract with custom price.
+
+    Args:
+        resource: Resource instance to compare.
+        market_price: Market price from VWAP.
+        contract_price: User-defined contract price per unit.
+        input_prices: Map of resource ID to price for input materials.
+        transport_price: Price per transport unit.
+        config: Profit calculation configuration.
+
+    Returns:
+        Dictionary with comparison data including:
+            - market: Market mode profit breakdown
+            - contract: Contract mode profit breakdown
+            - diff_per_unit: Net difference per unit (contract - market)
+            - diff_per_hour: Net difference per hour
+            - missing_input_price: True if any input price was missing
+            - is_abundance_res: True if resource is abundance-based
+    """
+    # Calculate market mode (4% fee, 100% transport)
+    market_config = ProfitConfig(
+        quality=config.quality,
+        abundance=config.abundance,
+        admin_overhead=config.admin_overhead,
+        is_contract=False,
+        has_robots=config.has_robots,
+    )
+    market_data = resource.calculate_profit(
+        selling_price=market_price,
+        input_prices=input_prices,
+        transport_price=transport_price,
+        abundance=config.abundance,
+        admin_overhead=config.admin_overhead,
+        is_contract=False,
+        has_robots=config.has_robots,
+    )
+
+    # Calculate contract mode (0% fee, 50% transport) with custom price
+    contract_data = resource.calculate_profit(
+        selling_price=contract_price,
+        input_prices=input_prices,
+        transport_price=transport_price,
+        abundance=config.abundance,
+        admin_overhead=config.admin_overhead,
+        is_contract=True,
+        has_robots=config.has_robots,
+    )
+
+    # Calculate per-unit values
+    produced_per_hour = resource.get_effective_production(config.abundance)
+    
+    market_net_per_unit = market_data["profit_per_hour"] / produced_per_hour if produced_per_hour > 0 else 0
+    contract_net_per_unit = contract_data["profit_per_hour"] / produced_per_hour if produced_per_hour > 0 else 0
+    
+    diff_per_unit = contract_net_per_unit - market_net_per_unit
+    diff_per_hour = contract_data["profit_per_hour"] - market_data["profit_per_hour"]
+
+    return {
+        "name": resource.name,
+        "market": {
+            "price": market_price,
+            "fee_per_unit": market_data["market_fee_per_hour"] / produced_per_hour if produced_per_hour > 0 else 0,
+            "transport_per_unit": market_data["transport_costs_per_hour"] / produced_per_hour if produced_per_hour > 0 else 0,
+            "net_per_unit": market_net_per_unit,
+            "profit_per_hour": market_data["profit_per_hour"],
+        },
+        "contract": {
+            "price": contract_price,
+            "fee_per_unit": 0.0,  # Always 0 for contracts
+            "transport_per_unit": contract_data["transport_costs_per_hour"] / produced_per_hour if produced_per_hour > 0 else 0,
+            "net_per_unit": contract_net_per_unit,
+            "profit_per_hour": contract_data["profit_per_hour"],
+        },
+        "diff_per_unit": diff_per_unit,
+        "diff_per_hour": diff_per_hour,
+        "missing_input_price": market_data["missing_input_price"],
+        "is_abundance_res": market_data["is_abundance_res"],
+    }
+
+
 def simulate_prospecting(
     target_abundance: float,
     attempt_time: float,

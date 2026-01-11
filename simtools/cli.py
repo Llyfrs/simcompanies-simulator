@@ -17,6 +17,7 @@ from simtools.calculator import (
     calculate_building_roi,
     calculate_level_roi,
     calculate_lifecycle_roi,
+    compare_market_vs_contract,
     simulate_prospecting,
 )
 from simtools.models.building import Building, build_resource_to_building_map
@@ -318,6 +319,110 @@ def display_lifecycle_table(results: list[dict], start_abundance: float) -> None
         )
 
 
+def display_compare_table(
+    comparisons: list[dict],
+    transport_price: float,
+    config: ProfitConfig,
+) -> None:
+    """Display market vs contract comparison table.
+
+    Args:
+        comparisons: List of comparison dictionaries from compare_market_vs_contract.
+        transport_price: Price per transport unit.
+        config: Profit calculation configuration.
+    """
+    console.print(f"\n[bold blue]Market vs Contract Comparison[/bold blue]")
+    console.print(
+        f"Quality: [bold cyan]{config.quality}[/bold cyan] | "
+        f"Transport: [bold cyan]${transport_price:.3f}[/bold cyan] | "
+        f"Abundance: [bold cyan]{config.abundance}%[/bold cyan] | "
+        f"Admin Overhead: [bold cyan]{config.admin_overhead}%[/bold cyan] | "
+        f"Robots: [bold cyan]{'Yes' if config.has_robots else 'No'}[/bold cyan]"
+    )
+
+    table = Table(
+        show_header=True,
+        header_style="bold white on blue",
+        box=box.ROUNDED,
+        border_style="bright_black",
+    )
+    
+    # Resource name column
+    table.add_column("Resource", style="bold white")
+    
+    # Market columns
+    table.add_column("Mkt Price", justify="right", style="cyan")
+    table.add_column("Mkt Fee/u", justify="right", style="red")
+    table.add_column("Mkt Trans/u", justify="right", style="magenta")
+    table.add_column("Mkt Net/u", justify="right", style="white")
+    table.add_column("Mkt $/hr", justify="right", style="white")
+    
+    # Contract columns
+    table.add_column("Cnt Price", justify="right", style="cyan")
+    table.add_column("Cnt Fee/u", justify="right", style="red")
+    table.add_column("Cnt Trans/u", justify="right", style="magenta")
+    table.add_column("Cnt Net/u", justify="right", style="white")
+    table.add_column("Cnt $/hr", justify="right", style="white")
+    
+    # Difference columns
+    table.add_column("Diff/u", justify="right")
+    table.add_column("Diff/hr", justify="right")
+
+    for comp in comparisons:
+        warn = " [bold red](!)[/bold red]" if comp["missing_input_price"] else ""
+        abundance_mark = " [bold yellow](*)[/bold yellow]" if comp["is_abundance_res"] else ""
+        
+        # Determine styling for differences
+        if comp["diff_per_unit"] > 0:
+            diff_unit_style = "bold green"
+            diff_unit_prefix = "+"
+        elif comp["diff_per_unit"] < 0:
+            diff_unit_style = "bold red"
+            diff_unit_prefix = ""
+        else:
+            diff_unit_style = "white"
+            diff_unit_prefix = ""
+            
+        if comp["diff_per_hour"] > 0:
+            diff_hour_style = "bold green"
+            diff_hour_prefix = "+"
+        elif comp["diff_per_hour"] < 0:
+            diff_hour_style = "bold red"
+            diff_hour_prefix = ""
+        else:
+            diff_hour_style = "white"
+            diff_hour_prefix = ""
+
+        table.add_row(
+            f"{comp['name']}{abundance_mark}",
+            f"${comp['market']['price']:.2f}",
+            f"${comp['market']['fee_per_unit']:.2f}",
+            f"${comp['market']['transport_per_unit']:.2f}{warn}",
+            f"${comp['market']['net_per_unit']:.2f}",
+            f"${comp['market']['profit_per_hour']:.2f}",
+            f"${comp['contract']['price']:.2f}",
+            f"${comp['contract']['fee_per_unit']:.2f}",
+            f"${comp['contract']['transport_per_unit']:.2f}",
+            f"${comp['contract']['net_per_unit']:.2f}",
+            f"${comp['contract']['profit_per_hour']:.2f}",
+            f"[{diff_unit_style}]{diff_unit_prefix}${comp['diff_per_unit']:.2f}[/{diff_unit_style}]",
+            f"[{diff_hour_style}]{diff_hour_prefix}${comp['diff_per_hour']:.2f}[/{diff_hour_style}]",
+        )
+
+    console.print(table)
+
+    if any(comp["is_abundance_res"] for comp in comparisons):
+        console.print(
+            f"\n[bold yellow](*)[/bold yellow] indicates abundance-based resource "
+            f"(applied {config.abundance}% abundance)"
+        )
+    if any(comp["missing_input_price"] for comp in comparisons):
+        console.print(
+            f"[bold red](!)[/bold red] indicates one or more source materials had no "
+            f"Quality {config.quality} market price"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments using subcommands.
 
@@ -539,6 +644,30 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         dest="debug_unassigned",
         help="List resources not assigned to any building",
+    )
+
+    # compare subcommand
+    compare_parser = subparsers.add_parser(
+        "compare",
+        parents=[parent_parser],
+        help="Compare market vs contract sales",
+        description="Compare selling on the market vs selling via contracts with a custom contract price",
+    )
+    compare_parser.add_argument(
+        "-s",
+        "--search",
+        type=str,
+        nargs="+",
+        required=True,
+        help="Search resources by name (case-insensitive)",
+    )
+    compare_parser.add_argument(
+        "-p",
+        "--price",
+        type=float,
+        required=True,
+        dest="contract_price",
+        help="Contract price per unit (e.g., 97.5)",
     )
 
     args = parser.parse_args()
@@ -790,6 +919,48 @@ def main() -> None:
                 search_terms=args.search if hasattr(args, "search") else None, 
                 building_terms=args.building if hasattr(args, "building") else None
             )
+
+        # Handle compare command
+        if args.command == "compare":
+            # Filter resources by search terms
+            search_filtered = [
+                r
+                for r in filtered_resources
+                if any(term.lower() in r.name.lower() for term in args.search)
+            ]
+
+            if not search_filtered:
+                console.print(
+                    f"[bold red]No resources found matching search terms: {', '.join(args.search)}[/bold red]"
+                )
+                return
+
+            # Calculate comparisons for each resource
+            comparisons = []
+            for res in search_filtered:
+                market_price = price_map.get(res.id, 0)
+                if market_price == 0:
+                    console.print(
+                        f"[yellow]Warning: No market price found for {res.name} at Quality {config.quality}[/yellow]"
+                    )
+                    continue
+
+                comparison = compare_market_vs_contract(
+                    resource=res,
+                    market_price=market_price,
+                    contract_price=args.contract_price,
+                    input_prices=price_map,
+                    transport_price=transport_price,
+                    config=config,
+                )
+                comparisons.append(comparison)
+
+            if comparisons:
+                display_compare_table(comparisons, transport_price, config)
+            else:
+                console.print(
+                    f"[bold red]No valid comparisons could be made. Check that resources have market prices at Quality {config.quality}[/bold red]"
+                )
 
     except Exception as exc:
         console.print(f"[bold red]Error fetching data: {exc}[/bold red]")

@@ -380,13 +380,6 @@ def compare_market_vs_contract(
             - is_abundance_res: True if resource is abundance-based
     """
     # Calculate market mode (4% fee, 100% transport)
-    market_config = ProfitConfig(
-        quality=config.quality,
-        abundance=config.abundance,
-        admin_overhead=config.admin_overhead,
-        is_contract=False,
-        has_robots=config.has_robots,
-    )
     market_data = resource.calculate_profit(
         selling_price=market_price,
         input_prices=input_prices,

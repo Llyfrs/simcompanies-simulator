@@ -394,10 +394,10 @@ def display_compare_table(
             diff_hour_prefix = ""
 
         table.add_row(
-            f"{comp['name']}{abundance_mark}",
+            f"{comp['name']}{abundance_mark}{warn}",
             f"${comp['market']['price']:.2f}",
             f"${comp['market']['fee_per_unit']:.2f}",
-            f"${comp['market']['transport_per_unit']:.2f}{warn}",
+            f"${comp['market']['transport_per_unit']:.2f}",
             f"${comp['market']['net_per_unit']:.2f}",
             f"${comp['market']['profit_per_hour']:.2f}",
             f"${comp['contract']['price']:.2f}",

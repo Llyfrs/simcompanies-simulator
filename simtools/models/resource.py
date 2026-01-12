@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TypedDict
 
 
 # Constants for game mechanics
 MARKET_FEE_RATE = 0.04
 CONTRACT_TRANSPORT_DISCOUNT = 0.5
 ROBOT_WAGE_DISCOUNT = 0.03
+
+
+class ProfitData(TypedDict):
+    """Type definition for profit calculation results."""
+
+    name: str
+    profit_per_hour: float
+    revenue_per_hour: float
+    market_fee_per_hour: float
+    costs_per_hour: float
+    transport_costs_per_hour: float
+    missing_input_price: bool
+    is_abundance_res: bool
 
 
 @dataclass(slots=True)
@@ -24,44 +38,6 @@ class ResourceInput:
     id: int
     name: str
     quantity: float
-
-
-@dataclass
-class ProfitResult:
-    """Result of a profit calculation for a resource.
-
-    Attributes:
-        name: Resource name.
-        profit_per_hour: Net profit per hour.
-        revenue_per_hour: Gross revenue per hour.
-        market_fee_per_hour: Market fee per hour.
-        costs_per_hour: Wages + admin + input costs per hour.
-        transport_costs_per_hour: Transportation costs per hour.
-        missing_input_price: True if any input price was missing.
-        is_abundance_res: True if this is an abundance-based resource.
-    """
-
-    name: str
-    profit_per_hour: float
-    revenue_per_hour: float
-    market_fee_per_hour: float
-    costs_per_hour: float
-    transport_costs_per_hour: float
-    missing_input_price: bool
-    is_abundance_res: bool
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary for backwards compatibility."""
-        return {
-            "name": self.name,
-            "profit_per_hour": self.profit_per_hour,
-            "revenue_per_hour": self.revenue_per_hour,
-            "market_fee_per_hour": self.market_fee_per_hour,
-            "costs_per_hour": self.costs_per_hour,
-            "transport_costs_per_hour": self.transport_costs_per_hour,
-            "missing_input_price": self.missing_input_price,
-            "is_abundance_res": self.is_abundance_res,
-        }
 
 
 @dataclass
@@ -170,7 +146,7 @@ class Resource:
         admin_overhead: float = 0.0,
         is_contract: bool = False,
         has_robots: bool = False,
-    ) -> dict:
+    ) -> ProfitData:
         """Calculate profit metrics for this resource.
 
         Args:
@@ -183,7 +159,7 @@ class Resource:
             has_robots: If True, apply 3% wage reduction for robots.
 
         Returns:
-            Dictionary with profit breakdown including:
+            ProfitData dictionary with profit breakdown including:
                 - profit_per_hour: Net profit per hour
                 - revenue_per_hour: Gross revenue per hour
                 - market_fee_per_hour: Market fee per hour

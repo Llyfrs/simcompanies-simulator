@@ -96,8 +96,8 @@ class Building:
         Returns:
             List of Resource instances that this building produces.
 
-        .. deprecated::
-            Use the `resources` property instead.
+        Note:
+            This method is deprecated. Use the `resources` property instead.
         """
         return self._resources
 
@@ -196,18 +196,17 @@ class Building:
         Args:
             material_name: Name of the material.
             prices: Price map keyed by resource ID.
-            name_to_id: Optional name to ID mapping.
+            name_to_id: Name to ID mapping. Required for looking up prices.
 
         Returns:
             Price of the material, or 0 if not found.
         """
-        if name_to_id is not None:
-            mat_id = name_to_id.get(material_name.lower())
-            if mat_id is not None:
-                return prices.get(mat_id, 0.0)
+        if name_to_id is None:
             return 0.0
-        # Legacy: prices keyed by name (should not be used in new code)
-        return prices.get(material_name.lower(), 0.0)
+        mat_id = name_to_id.get(material_name.lower())
+        if mat_id is not None:
+            return prices.get(mat_id, 0.0)
+        return 0.0
 
 
 def build_resource_to_building_map(buildings: list[Building]) -> dict[str, str]:

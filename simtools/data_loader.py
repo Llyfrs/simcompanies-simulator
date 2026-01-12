@@ -300,12 +300,16 @@ def load_game_data(
     # Build name to ID map
     name_to_id = build_name_to_id_map(raw_resources)
 
+    # Pre-compute lowercase resource sets for efficiency
+    abundance_set = [r.lower() for r in abundance_resources]
+    seasonal_set = [r.lower() for r in seasonal_resources]
+
     # Create Resource objects
     resources = [
         Resource.from_api_data(
             data,
-            abundance_resources=[r.lower() for r in abundance_resources],
-            seasonal_resources=[r.lower() for r in seasonal_resources],
+            abundance_resources=abundance_set,
+            seasonal_resources=seasonal_set,
         )
         for data in raw_resources
     ]

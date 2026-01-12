@@ -2,6 +2,7 @@
   {
     "id": "P",
     "name": "Farm",
+    "type": "production",
     "cost": {
       "Reinforced concrete": 8,
       "Planks": 32,
@@ -26,6 +27,7 @@
   {
     "id": "F",
     "name": "Ranch",
+    "type": "production",
     "cost": {
       "Bricks": 165,
       "Reinforced concrete": 12,
@@ -43,6 +45,7 @@
   {
     "id": "e",
     "name": "Slaughterhouse",
+    "type": "production",
     "cost": {
       "Bricks": 330,
       "Reinforced concrete": 24,
@@ -57,6 +60,7 @@
   {
     "id": "i",
     "name": "Mill",
+    "type": "production",
     "cost": {
       "Bricks": 440,
       "Reinforced concrete": 32,
@@ -72,6 +76,7 @@
   {
     "id": "6",
     "name": "Beverage factory",
+    "type": "production",
     "cost": {
       "Bricks": 220,
       "Reinforced concrete": 16,
@@ -88,6 +93,7 @@
   {
     "id": "k",
     "name": "Food processing plant",
+    "type": "production",
     "cost": {
       "Bricks": 1375,
       "Reinforced concrete": 100,
@@ -111,6 +117,7 @@
   {
     "id": "j",
     "name": "Bakery",
+    "type": "production",
     "cost": {
       "Bricks": 605,
       "Reinforced concrete": 44,
@@ -126,6 +133,7 @@
   {
     "id": "m",
     "name": "Catering",
+    "type": "production",
     "cost": {
       "Bricks": 1650,
       "Reinforced concrete": 120,
@@ -146,6 +154,7 @@
   {
     "id": "o",
     "name": "Concrete plant",
+    "type": "production",
     "cost": {
       "Bricks": 935,
       "Reinforced concrete": 68,
@@ -161,6 +170,7 @@
   {
     "id": "x",
     "name": "Construction factory",
+    "type": "production",
     "cost": {
       "Bricks": 1155,
       "Reinforced concrete": 84,
@@ -177,6 +187,7 @@
   {
     "id": "Q",
     "name": "Quarry",
+    "type": "production",
     "cost": {
       "Bricks": 385,
       "Reinforced concrete": 28,
@@ -192,6 +203,7 @@
   {
     "id": "T",
     "name": "Fashion factory",
+    "type": "production",
     "cost": {
       "Bricks": 220,
       "Reinforced concrete": 16,
@@ -214,6 +226,7 @@
   {
     "id": "E",
     "name": "Power plant",
+    "type": "production",
     "cost": {
       "Bricks": 825,
       "Reinforced concrete": 60,
@@ -227,6 +240,7 @@
   {
     "id": "O",
     "name": "Oil rig",
+    "type": "production",
     "cost": {
       "Bricks": 1100,
       "Reinforced concrete": 80,
@@ -241,6 +255,7 @@
   {
     "id": "R",
     "name": "Refinery",
+    "type": "production",
     "cost": {
       "Bricks": 1100,
       "Reinforced concrete": 80,
@@ -258,6 +273,7 @@
   {
     "id": "L",
     "name": "Electronics factory",
+    "type": "production",
     "cost": {
       "Bricks": 1320,
       "Reinforced concrete": 96,
@@ -283,6 +299,7 @@
   {
     "id": "1",
     "name": "Car factory",
+    "type": "production",
     "cost": {
       "Bricks": 1485,
       "Reinforced concrete": 108,
@@ -304,6 +321,7 @@
   {
     "id": "7",
     "name": "Aerospace factory",
+    "type": "production",
     "cost": {
       "Bricks": 1705,
       "Reinforced concrete": 124,
@@ -323,6 +341,7 @@
   {
     "id": "D",
     "name": "Propulsion factory",
+    "type": "production",
     "cost": {
       "Bricks": 1650,
       "Reinforced concrete": 120,
@@ -341,6 +360,7 @@
   {
     "id": "0",
     "name": "Hangar",
+    "type": "production",
     "cost": {
       "Bricks": 1595,
       "Reinforced concrete": 116,
@@ -356,6 +376,7 @@
   {
     "id": "8",
     "name": "Aerospace electronics",
+    "type": "production",
     "cost": {
       "Bricks": 2255,
       "Reinforced concrete": 164,
@@ -373,6 +394,7 @@
   {
     "id": "W",
     "name": "Water reservoir",
+    "type": "production",
     "cost": {
       "Bricks": 330,
       "Reinforced concrete": 24,
@@ -386,6 +408,7 @@
   {
     "id": "S",
     "name": "Shipping depot",
+    "type": "production",
     "cost": {
       "Bricks": 825,
       "Reinforced concrete": 60,
@@ -399,6 +422,7 @@
   {
     "id": "R",
     "name": "Refinery",
+    "type": "production",
     "cost": {
       "Bricks": 1100,
       "Reinforced concrete": 80,
@@ -416,6 +440,7 @@
   {
     "id": "M",
     "name": "Mine",
+    "type": "production",
     "cost": {
       "Bricks": 385,
       "Reinforced concrete": 28,
@@ -432,6 +457,7 @@
   {
     "id": "Y",
     "name": "Factory",
+    "type": "production",
     "cost": {
       "Bricks": 770,
       "Reinforced concrete": 56,
@@ -453,6 +479,7 @@
   {
     "id": "g",
     "name": "General contractor",
+    "type": "production",
     "cost": {
       "Bricks": 770,
       "Reinforced concrete": 56,
@@ -466,6 +493,7 @@
   {
     "id": "9",
     "name": "Vertical integration facility",
+    "type": "production",
     "cost": {
       "Bricks": 1815,
       "Reinforced concrete": 132,
@@ -480,6 +508,7 @@
   {
     "id": "s",
     "name": "Software R&D",
+    "type": "production",
     "cost": {
       "Bricks": 1045,
       "Reinforced concrete": 76,
@@ -493,6 +522,7 @@
   {
     "id": "f",
     "name": "Fashion & Design",
+    "type": "production",
     "cost": {
       "Bricks": 1155,
       "Reinforced concrete": 84,
@@ -506,6 +536,7 @@
   {
     "id": "q",
     "name": "Kitchen",
+    "type": "production",
     "cost": {
       "Bricks": 1320,
       "Reinforced concrete": 96,
@@ -519,6 +550,7 @@
   {
     "id": "b",
     "name": "Breeding laboratory",
+    "type": "production",
     "cost": {
       "Bricks": 1540,
       "Reinforced concrete": 112,
@@ -532,6 +564,7 @@
   {
     "id": "c",
     "name": "Chemistry laboratory",
+    "type": "production",
     "cost": {
       "Bricks": 1540,
       "Reinforced concrete": 112,
@@ -546,6 +579,7 @@
   {
     "id": "p",
     "name": "Plant research center",
+    "type": "production",
     "cost": {
       "Bricks": 1650,
       "Reinforced concrete": 120,
@@ -559,6 +593,7 @@
   {
     "id": "l",
     "name": "Launch pad",
+    "type": "production",
     "cost": {
       "Bricks": 1980,
       "Reinforced concrete": 144,
@@ -572,6 +607,7 @@
   {
     "id": "a",
     "name": "Automotive R&D",
+    "type": "production",
     "cost": {
       "Bricks": 2200,
       "Reinforced concrete": 160,
@@ -585,6 +621,7 @@
   {
     "id": "h",
     "name": "Physics laboratory",
+    "type": "production",
     "cost": {
       "Bricks": 2640,
       "Reinforced concrete": 192,

@@ -21,6 +21,7 @@ class Building:
 
     name: str
     id: str = ""
+    type: str = "production"
     cost: dict[str, int] = field(default_factory=dict)
     produces: list[str] = field(default_factory=list)
     level: int = 1
@@ -59,6 +60,7 @@ class Building:
         return cls(
             name=data.get("name", ""),
             id=data.get("id", ""),
+            type=data.get("type", "production"),
             cost=data.get("cost", {}),
             produces=data.get("produces", []),
             level=data.get("level", 1),

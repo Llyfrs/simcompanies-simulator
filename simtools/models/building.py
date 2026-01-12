@@ -17,6 +17,13 @@ class Building:
 
     Buildings are the production facilities that create resources. Each building
     has construction costs and a list of resources it can produce.
+
+    Attributes:
+        name: Display name of the building.
+        id: Unique building identifier.
+        cost: Map of material name to quantity required for construction.
+        produces: List of resource names this building can produce.
+        level: Current building level.
     """
 
     name: str
@@ -30,24 +37,21 @@ class Building:
 
     @property
     def production_multiplier(self) -> float:
-        """Get the production multiplier for this building level.
-
-        Returns:
-            Production multiplier (equal to level).
-        """
+        """Get the production multiplier for this building level."""
         return float(self.level)
 
     @property
     def wage_multiplier(self) -> float:
-        """Get the wage multiplier for this building level.
-
-        Returns:
-            Wage multiplier (equal to level).
-        """
+        """Get the wage multiplier for this building level."""
         return float(self.level)
 
+    @property
+    def resources(self) -> list[Resource]:
+        """Get the resolved Resource objects for this building."""
+        return self._resources
+
     @classmethod
-    def from_dict(cls, data: dict) -> "Building":
+    def from_dict(cls, data: dict) -> Building:
         """Create a Building instance from a dictionary.
 
         Args:
@@ -65,7 +69,7 @@ class Building:
         )
 
     @classmethod
-    def load_all(cls, filepath: str | Path | None = None) -> list["Building"]:
+    def load_all(cls, filepath: str | Path | None = None) -> list[Building]:
         """Load all buildings from the JSON file.
 
         Args:
@@ -75,7 +79,6 @@ class Building:
             List of Building instances.
         """
         if filepath is None:
-            # Default to simtools/data/buildings.json
             filepath = Path(__file__).parent.parent / "data" / "buildings.json"
 
         filepath = Path(filepath)
@@ -92,6 +95,9 @@ class Building:
 
         Returns:
             List of Resource instances that this building produces.
+
+        .. deprecated::
+            Use the `resources` property instead.
         """
         return self._resources
 
@@ -109,7 +115,9 @@ class Building:
                 self._resources.append(resource)
 
     def calculate_construction_cost(
-        self, prices: dict[str, float], name_to_id: dict[str, int] | None = None
+        self,
+        prices: dict[int, float],
+        name_to_id: dict[str, int] | None = None,
     ) -> tuple[float, bool]:
         """Calculate the total construction cost for this building.
 
@@ -125,18 +133,7 @@ class Building:
         missing_price = False
 
         for material_name, amount in self.cost.items():
-            if name_to_id is not None:
-                # Look up by ID
-                mat_id = name_to_id.get(material_name.lower())
-                if mat_id:
-                    price = prices.get(mat_id, 0)
-                else:
-                    price = 0
-                    missing_price = True
-            else:
-                # Prices keyed by name
-                price = prices.get(material_name.lower(), 0)
-
+            price = self._get_material_price(material_name, prices, name_to_id)
             if price == 0:
                 missing_price = True
             total_cost += price * amount
@@ -145,7 +142,7 @@ class Building:
 
     def calculate_upgrade_cost(
         self,
-        prices: dict[str, float],
+        prices: dict[int, float],
         target_level: int,
         name_to_id: dict[str, int] | None = None,
     ) -> tuple[float, bool]:
@@ -166,12 +163,13 @@ class Building:
             return 0.0, False
 
         base_cost, missing_price = self.calculate_construction_cost(prices, name_to_id)
-        
-        total_upgrade_cost = 0.0
-        # Calculate cost for each step: current -> current+1, ..., target-1 -> target
-        # Step cost from k to k+1 is k * base_cost
-        for k in range(self.level, target_level):
-            total_upgrade_cost += k * base_cost
+
+        # Sum of upgrade costs: base_cost * (1 + 2 + ... + (target-1))
+        # = base_cost * (target-1) * target / 2 when starting from level 1
+        # For starting from self.level: sum from self.level to target_level-1
+        total_upgrade_cost = sum(
+            k * base_cost for k in range(self.level, target_level)
+        )
 
         return total_upgrade_cost, missing_price
 
@@ -184,7 +182,32 @@ class Building:
         Returns:
             True if this building produces the resource.
         """
-        return resource_name.lower() in [p.lower() for p in self.produces]
+        resource_name_lower = resource_name.lower()
+        return any(p.lower() == resource_name_lower for p in self.produces)
+
+    def _get_material_price(
+        self,
+        material_name: str,
+        prices: dict[int, float],
+        name_to_id: dict[str, int] | None,
+    ) -> float:
+        """Get the price for a building material.
+
+        Args:
+            material_name: Name of the material.
+            prices: Price map keyed by resource ID.
+            name_to_id: Optional name to ID mapping.
+
+        Returns:
+            Price of the material, or 0 if not found.
+        """
+        if name_to_id is not None:
+            mat_id = name_to_id.get(material_name.lower())
+            if mat_id is not None:
+                return prices.get(mat_id, 0.0)
+            return 0.0
+        # Legacy: prices keyed by name (should not be used in new code)
+        return prices.get(material_name.lower(), 0.0)
 
 
 def build_resource_to_building_map(buildings: list[Building]) -> dict[str, str]:
@@ -196,9 +219,9 @@ def build_resource_to_building_map(buildings: list[Building]) -> dict[str, str]:
     Returns:
         Dictionary mapping resource name (lowercase) to building name.
     """
-    mapping = {}
-    for building in buildings:
-        for res_name in building.produces:
-            mapping[res_name.lower()] = building.name
-    return mapping
+    return {
+        res_name.lower(): building.name
+        for building in buildings
+        for res_name in building.produces
+    }
 

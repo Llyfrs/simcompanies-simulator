@@ -3,13 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import json
-from pathlib import Path
 
-from rich import box
-from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-from rich.table import Table
 
 from simtools.api import SimcoAPI
 from simtools.calculator import (
@@ -23,1296 +18,529 @@ from simtools.calculator import (
     compare_market_vs_contract,
     simulate_prospecting,
 )
-from simtools.genetic import (
-    GeneticAlgorithm,
-    SimulationConfig,
-    render_ascii_graph,
+from simtools.data_loader import (
+    get_data_path,
+    load_game_data,
 )
+from simtools.display import (
+    console,
+    display_compare_table,
+    display_company_analysis,
+    display_genetic_results,
+    display_lifecycle_table,
+    display_profits_table,
+    display_prospecting_results,
+    display_roi_table,
+    display_upgrade_recommendations,
+    prompt_building_levels,
+)
+from simtools.genetic import GeneticAlgorithm, SimulationConfig
 from simtools.models.building import Building, build_resource_to_building_map
-from simtools.models.resource import Resource
-
-console = Console()
 
 
-def get_data_path(filename: str) -> Path:
-    """Get the path to a data file.
-
-    First checks the simtools/data directory, then falls back to the workspace root.
-
-    Args:
-        filename: Name of the data file.
-
-    Returns:
-        Path to the data file.
-    """
-    # Check package data directory first
-    package_data = Path(__file__).parent / "data" / filename
-    if package_data.exists():
-        return package_data
-
-    # Fall back to workspace root
-    return Path(filename)
+# =============================================================================
+# Command Handlers
+# =============================================================================
 
 
-def load_json_list(filepath: Path) -> list[str]:
-    """Load a JSON file containing a list of strings.
-
-    Args:
-        filepath: Path to the JSON file.
-
-    Returns:
-        List of strings, or empty list if file doesn't exist.
-    """
-    if not filepath.exists():
-        return []
-    with open(filepath, "r") as f:
-        return json.load(f)
+def handle_prospect_command(args: argparse.Namespace) -> None:
+    """Handle the prospect subcommand."""
+    results = simulate_prospecting(args.abundance / 100, args.time, args.slots)
+    display_prospecting_results(results)
 
 
-def save_json(data, filename: str) -> None:
-    """Save data to a JSON file in the workspace root.
+def handle_debug_command(args: argparse.Namespace, api: SimcoAPI) -> None:
+    """Handle the debug subcommand."""
+    if hasattr(args, "debug_unassigned") and args.debug_unassigned:
+        buildings = Building.load_all(get_data_path("buildings.json"))
+        resource_to_building = build_resource_to_building_map(buildings)
 
-    Args:
-        data: Data to save.
-        filename: Name of the output file.
-    """
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=2)
-    console.log(f"Data saved to [cyan]{filename}[/cyan]")
+        resources_data = api.get_resources()
+        raw_resources = resources_data.get("resources", [])
+
+        unassigned = [
+            res.get("name")
+            for res in raw_resources
+            if res.get("name", "").lower() not in resource_to_building
+        ]
+        unassigned.sort()
+        console.print("\n[bold red]Resources not assigned to any building:[/bold red]")
+        for name in unassigned:
+            console.print(f" - {name}")
+    else:
+        console.print("[yellow]No debug option specified. Use -u/--unassigned[/yellow]")
 
 
-def display_prospecting_results(results: dict) -> None:
-    """Display prospecting simulation results.
+def handle_lifecycle_command(
+    args: argparse.Namespace,
+    game_data,
+    config: ProfitConfig,
+) -> None:
+    """Handle the lifecycle subcommand."""
+    filtered_resources = game_data.filter_resources(
+        exclude_seasonal=getattr(args, "exclude_seasonal", False),
+        building_filter=getattr(args, "building", None),
+    )
 
-    Args:
-        results: Results from simulate_prospecting().
-    """
-    if results.get("impossible"):
-        console.print(
-            f"[bold red]Target abundance {results['target_abundance']*100:.1f}% "
-            f"is impossible with the current distribution.[/bold red]"
+    abundance_res_objects = [r for r in filtered_resources if r.is_abundance]
+    lifecycle_results = []
+
+    for res in abundance_res_objects:
+        if not res.building_name:
+            continue
+
+        building = next(
+            (b for b in game_data.buildings if b.name == res.building_name), None
         )
-        return
+        if not building:
+            continue
 
-    table_width = 60
-
-    table = Table(
-        title="Prospecting Simulation Results",
-        show_header=True,
-        header_style="bold magenta",
-        box=box.ROUNDED,
-        width=table_width,
-    )
-    table.add_column("Statistic", style="cyan")
-    table.add_column("Value", justify="right", style="green")
-
-    table.add_row("Target Abundance", f"{results['target_abundance']*100:.1f}%")
-    table.add_row("Build Time per Attempt", f"{results['attempt_time']:.1f} hours")
-    table.add_row("Number of Slots", f"{results['slots']}")
-    table.add_row("Prob. Success (Single)", f"{results['p_success_single']*100:.4f}%")
-    table.add_row("Prob. Success (Block)", f"{results['p_success_block']*100:.4f}%")
-    table.add_row("Expected Blocks", f"{results['expected_blocks']:.2f}")
-    table.add_row(
-        "Expected Time",
-        f"{results['expected_time']:.2f} hours ({results['expected_time']/24:.2f} days)",
-    )
-
-    if results.get("days_to_85") is not None:
-        table.add_row("Days until 85%", f"{results['days_to_85']:.1f} days")
-
-    console.print(table)
-
-    # Confidence intervals table
-    conf_table = Table(
-        title="Confidence Intervals (Time to Success)",
-        show_header=True,
-        header_style="bold blue",
-        box=box.ROUNDED,
-        width=table_width,
-    )
-    conf_table.add_column("Confidence Level", style="cyan")
-    conf_table.add_column("Required Blocks", justify="right", style="yellow")
-    conf_table.add_column("Required Time", justify="right", style="green")
-
-    for ci in results["confidence_intervals"]:
-        conf_table.add_row(
-            f"{ci['confidence']*100:.0f}%",
-            f"{ci['blocks']}",
-            f"{ci['time_hours']:.1f}h ({ci['time_days']:.1f}d)",
+        res_results = calculate_lifecycle_roi(
+            building=building,
+            resource=res,
+            profit_config=config,
+            current_prices=game_data.price_maps.current_quality,
+            q0_prices=game_data.price_maps.quality_zero,
+            transport_price=game_data.price_maps.transport_price,
+            name_to_id=game_data.name_to_id,
+            start_abundance=args.abundance / 100.0,
+            max_level=args.max_level,
+            base_build_time=args.build_time,
         )
+        lifecycle_results.extend(res_results)
 
-    console.print(conf_table)
+    lifecycle_results.sort(key=lambda x: x["net_profit"], reverse=True)
+    display_lifecycle_table(lifecycle_results, args.abundance)
 
 
-def display_profits_table(
+def handle_roi_command(
+    args: argparse.Namespace,
+    game_data,
+    profits: list[dict],
+    config: ProfitConfig,
+) -> None:
+    """Handle the roi subcommand."""
+    if hasattr(args, "building") and args.building:
+        res_profit_map = {p["name"].lower(): p for p in profits}
+        all_roi_data = []
+
+        for building in game_data.buildings:
+            best_profit = -float("inf")
+            best_p_data = None
+
+            for res_name in building.produces:
+                res_name_lower = res_name.lower()
+                if res_name_lower in res_profit_map:
+                    p_data = res_profit_map[res_name_lower]
+                    if p_data["profit_per_hour"] > best_profit:
+                        best_profit = p_data["profit_per_hour"]
+                        best_p_data = p_data
+
+            if best_p_data:
+                all_roi_data.extend(
+                    calculate_level_roi(
+                        building,
+                        best_p_data,
+                        game_data.price_maps.quality_zero,
+                        game_data.name_to_id,
+                        max_level=args.max_level,
+                        step_mode=args.step_roi,
+                    )
+                )
+
+        display_roi_table(all_roi_data)
+    else:
+        roi_data = calculate_building_roi(
+            game_data.buildings,
+            profits,
+            game_data.price_maps.quality_zero,
+            game_data.name_to_id,
+        )
+        display_roi_table(roi_data)
+
+
+def handle_profit_command(
+    args: argparse.Namespace,
     profits: list[dict],
     transport_price: float,
     config: ProfitConfig,
-    search_terms: list[str] | None = None,
-    building_terms: list[str] | None = None,
 ) -> None:
-    """Display the profits table.
-
-    Args:
-        profits: List of profit dictionaries.
-        transport_price: Price per transport unit.
-        config: Profit calculation configuration.
-        search_terms: Search terms used for filtering (for header).
-        building_terms: Building terms used for filtering (for header).
-    """
-    # Build header title
-    header_title = "Top 30 Most Profitable Resources"
-    if search_terms or building_terms:
-        parts = []
-        if search_terms:
-            parts.append(f"search: '{', '.join(search_terms)}'")
-        if building_terms:
-            parts.append(f"building: '{', '.join(building_terms)}'")
-        header_title = f"Results for {' & '.join(parts)}"
-
-    if config.is_contract:
-        header_title += " (Direct Contract Mode)"
-
-    console.print(f"\n[bold blue]{header_title}[/bold blue]")
-    market_fee_display = "0%" if config.is_contract else "4%"
-    console.print(
-        f"Quality: [bold cyan]{config.quality}[/bold cyan] | "
-        f"Transport: [bold cyan]${transport_price:.3f}[/bold cyan] | "
-        f"Market Fee: [bold cyan]{market_fee_display}[/bold cyan] | "
-        f"Admin Overhead: [bold cyan]{config.admin_overhead}%[/bold cyan] | "
-        f"Robots: [bold cyan]{'Yes' if config.has_robots else 'No'}[/bold cyan]"
+    """Handle the profit subcommand."""
+    display_profits_table(
+        profits,
+        transport_price,
+        config,
+        search_terms=getattr(args, "search", None),
+        building_terms=getattr(args, "building", None),
     )
 
-    table = Table(
-        show_header=True,
-        header_style="bold white on blue",
-        box=box.ROUNDED,
-        border_style="bright_black",
-    )
-    table.add_column("Resource", style="bold white", width=25)
-    table.add_column("Profit/hr", justify="right")
-    table.add_column("Revenue/hr", justify="right", style="white")
-    table.add_column("Fee/hr", justify="right", style="red")
-    table.add_column("Costs/hr", justify="right", style="yellow")
-    table.add_column("Transp/hr", justify="right", style="magenta")
 
-    display_count = 30 if not search_terms else len(profits)
-    for p in profits[:display_count]:
-        warn = " [bold red](!)[/bold red]" if p["missing_input_price"] else ""
-        abundance_mark = " [bold yellow](*)[/bold yellow]" if p["is_abundance_res"] else ""
-
-        profit_style = "bold green" if p["profit_per_hour"] >= 0 else "bold red"
-
-        table.add_row(
-            f"{p['name']}{abundance_mark}",
-            f"[{profit_style}]${p['profit_per_hour']:,.2f}[/{profit_style}]",
-            f"${p['revenue_per_hour']:,.2f}",
-            f"${p['market_fee_per_hour']:,.2f}",
-            f"${p['costs_per_hour']:,.2f}",
-            f"${p['transport_costs_per_hour']:,.2f}{warn}",
-        )
-
-    console.print(table)
-
-    if any(p["is_abundance_res"] for p in profits[:display_count]):
-        console.print(
-            f"\n[bold yellow](*)[/bold yellow] indicates abundance-based resource "
-            f"(applied {config.abundance}% abundance)"
-        )
-    if any(p["missing_input_price"] for p in profits[:display_count]):
-        console.print(
-            f"[bold red](!)[/bold red] indicates one or more source materials had no "
-            f"Quality {config.quality} market price"
-        )
-
-
-def display_roi_table(roi_data: list[dict]) -> None:
-    """Display the ROI analysis table.
-
-    Args:
-        roi_data: List of ROI dictionaries.
-    """
-    roi_table = Table(
-        title="Building ROI Analysis",
-        show_header=True,
-        header_style="bold green",
-        box=box.ROUNDED,
-    )
-    roi_table.add_column("Building", style="bold white")
-    if roi_data and "level" in roi_data[0]:
-        col_name = "Step/Lv" if any("→" in str(d.get("level", "")) for d in roi_data) else "Lv"
-        roi_table.add_column(col_name, justify="right", style="cyan")
-    roi_table.add_column("Best Resource", style="cyan")
-    roi_table.add_column("Building Cost", justify="right", style="magenta")
-    roi_table.add_column("Daily Profit", justify="right", style="green")
-    roi_table.add_column("ROI (Daily)", justify="right", style="bold yellow")
-    roi_table.add_column("Break Even", justify="right", style="white")
-
-    for d in roi_data:
-        if d["break_even"] == float("inf"):
-            break_even_str = "∞"
-        elif d["daily_profit"] < 0:
-            break_even_str = "Never"
-        else:
-            break_even_str = f"{d['break_even']:.1f} days"
-
-        warn = " (!)" if d["missing_cost"] else ""
-
-        row_data = [
-            d["building"],
-        ]
-        if "level" in d:
-            row_data.append(str(d["level"]))
-        
-        row_data.extend([
-            d["resource"],
-            f"${d['cost']:,.0f}{warn}",
-            f"${d['daily_profit']:,.0f}",
-            f"{d['roi']:.2f}%",
-            break_even_str,
-        ])
-        
-        roi_table.add_row(*row_data)
-
-    console.print("\n")
-    console.print(roi_table)
-    if any(d["missing_cost"] for d in roi_data):
-        console.print(
-            "[yellow](!) Warning: Some building costs calculated with missing "
-            "material prices (assumed $0).[/yellow]"
-        )
-
-
-def display_lifecycle_table(results: list[dict], start_abundance: float) -> None:
-    """Display lifecycle ROI analysis table.
-
-    Args:
-        results: List of lifecycle result dictionaries.
-        start_abundance: Starting abundance percentage.
-    """
-    table = Table(
-        title=f"Lifecycle Analysis (Abundance {start_abundance}% -> 85%)",
-        show_header=True,
-        header_style="bold cyan",
-        box=box.ROUNDED,
-    )
-    table.add_column("Resource", style="bold white")
-    table.add_column("Level", justify="right", style="cyan")
-    table.add_column("Build(h)", justify="right", style="blue")
-    table.add_column("Prod Days", justify="right", style="white")
-    table.add_column("Investment", justify="right", style="magenta")
-    table.add_column("Unrecoverable", justify="right", style="red")
-    table.add_column("Ops Profit", justify="right", style="green")
-    table.add_column("Net Profit", justify="right", style="bold yellow")
-    
-    # Show top 30
-    for res in results[:30]:
-        warn = " (!)" if res["missing_cost"] else ""
-        table.add_row(
-            res["resource"],
-            str(res["level"]),
-            f"{res['build_time_hours']:.1f}",
-            str(res["days"]),
-            f"${res['investment']:,.0f}{warn}",
-            f"${res['unrecoverable']:,.0f}",
-            f"${res['operational_profit']:,.0f}",
-            f"${res['net_profit']:,.0f}",
-        )
-        
-    console.print("\n")
-    console.print(table)
-    if any(r["missing_cost"] for r in results):
-        console.print(
-            "[yellow](!) Warning: Some costs/profits calculated with missing prices.[/yellow]"
-        )
-
-
-def display_compare_table(
-    comparisons: list[dict],
-    transport_price: float,
+def handle_compare_command(
+    args: argparse.Namespace,
+    game_data,
     config: ProfitConfig,
 ) -> None:
-    """Display market vs contract comparison table.
-
-    Args:
-        comparisons: List of comparison dictionaries from compare_market_vs_contract.
-        transport_price: Price per transport unit.
-        config: Profit calculation configuration.
-    """
-    console.print(f"\n[bold blue]Market vs Contract Comparison[/bold blue]")
-    console.print(
-        f"Quality: [bold cyan]{config.quality}[/bold cyan] | "
-        f"Transport: [bold cyan]${transport_price:.3f}[/bold cyan] | "
-        f"Abundance: [bold cyan]{config.abundance}%[/bold cyan] | "
-        f"Admin Overhead: [bold cyan]{config.admin_overhead}%[/bold cyan] | "
-        f"Robots: [bold cyan]{'Yes' if config.has_robots else 'No'}[/bold cyan]"
+    """Handle the compare subcommand."""
+    filtered_resources = game_data.filter_resources(
+        exclude_seasonal=getattr(args, "exclude_seasonal", False),
     )
 
-    table = Table(
-        show_header=True,
-        header_style="bold white on blue",
-        box=box.ROUNDED,
-        border_style="bright_black",
-    )
-    
-    # Resource name column
-    table.add_column("Resource", style="bold white")
-    
-    # Market columns
-    table.add_column("Mkt Price", justify="right", style="cyan")
-    table.add_column("Mkt Fee/u", justify="right", style="red")
-    table.add_column("Mkt Trans/u", justify="right", style="magenta")
-    table.add_column("Mkt Net/u", justify="right", style="white")
-    table.add_column("Mkt $/hr", justify="right", style="white")
-    
-    # Contract columns
-    table.add_column("Cnt Price", justify="right", style="cyan")
-    table.add_column("Cnt Fee/u", justify="right", style="red")
-    table.add_column("Cnt Trans/u", justify="right", style="magenta")
-    table.add_column("Cnt Net/u", justify="right", style="white")
-    table.add_column("Cnt $/hr", justify="right", style="white")
-    
-    # Difference columns
-    table.add_column("Diff/u", justify="right")
-    table.add_column("Diff/hr", justify="right")
+    search_filtered = [
+        r
+        for r in filtered_resources
+        if any(term.lower() in r.name.lower() for term in args.search)
+    ]
 
-    for comp in comparisons:
-        warn = " [bold red](!)[/bold red]" if comp["missing_input_price"] else ""
-        abundance_mark = " [bold yellow](*)[/bold yellow]" if comp["is_abundance_res"] else ""
-        
-        # Determine styling for differences
-        if comp["diff_per_unit"] > 0:
-            diff_unit_style = "bold green"
-            diff_unit_prefix = "+"
-        elif comp["diff_per_unit"] < 0:
-            diff_unit_style = "bold red"
-            diff_unit_prefix = ""
-        else:
-            diff_unit_style = "white"
-            diff_unit_prefix = ""
-            
-        if comp["diff_per_hour"] > 0:
-            diff_hour_style = "bold green"
-            diff_hour_prefix = "+"
-        elif comp["diff_per_hour"] < 0:
-            diff_hour_style = "bold red"
-            diff_hour_prefix = ""
-        else:
-            diff_hour_style = "white"
-            diff_hour_prefix = ""
-
-        table.add_row(
-            f"{comp['name']}{abundance_mark}{warn}",
-            f"${comp['market']['price']:.2f}",
-            f"${comp['market']['fee_per_unit']:.2f}",
-            f"${comp['market']['transport_per_unit']:.2f}",
-            f"${comp['market']['net_per_unit']:.2f}",
-            f"${comp['market']['profit_per_hour']:.2f}",
-            f"${comp['contract']['price']:.2f}",
-            f"${comp['contract']['fee_per_unit']:.2f}",
-            f"${comp['contract']['transport_per_unit']:.2f}",
-            f"${comp['contract']['net_per_unit']:.2f}",
-            f"${comp['contract']['profit_per_hour']:.2f}",
-            f"[{diff_unit_style}]{diff_unit_prefix}${comp['diff_per_unit']:.2f}[/{diff_unit_style}]",
-            f"[{diff_hour_style}]{diff_hour_prefix}${comp['diff_per_hour']:.2f}[/{diff_hour_style}]",
-        )
-
-    console.print(table)
-
-    if any(comp["is_abundance_res"] for comp in comparisons):
+    if not search_filtered:
         console.print(
-            f"\n[bold yellow](*)[/bold yellow] indicates abundance-based resource "
-            f"(applied {config.abundance}% abundance)"
+            f"[bold red]No resources found matching search terms: "
+            f"{', '.join(args.search)}[/bold red]"
         )
-    if any(comp["missing_input_price"] for comp in comparisons):
-        console.print(
-            f"[bold red](!)[/bold red] indicates one or more source materials had no "
-            f"Quality {config.quality} market price"
-        )
-
-
-def display_company_analysis(
-    company_data: dict,
-    building_stats: list[dict],
-    config: ProfitConfig,
-) -> None:
-    """Display company analysis results.
-
-    Args:
-        company_data: Raw company data from API.
-        building_stats: List of building statistics from calculate_company_building_stats.
-        config: Profit calculation configuration.
-    """
-    company = company_data.get("company", {})
-
-    console.print("\n[bold blue]═══════════════════════════════════════════════════════════════[/bold blue]")
-    console.print("[bold blue]              COMPANY ANALYSIS                                 [/bold blue]")
-    console.print("[bold blue]═══════════════════════════════════════════════════════════════[/bold blue]\n")
-
-    # Company info
-    console.print("[bold cyan]Company Info:[/bold cyan]")
-    console.print(f"  • Name: [yellow]{company.get('name', 'N/A')}[/yellow]")
-    console.print(f"  • Level: [yellow]{company.get('level', 'N/A')}[/yellow]")
-    console.print(f"  • Rating: [yellow]{company.get('rating', 'N/A')}[/yellow]")
-    console.print(f"  • Total Buildings: [yellow]{company.get('totalBuildings', 'N/A')}[/yellow]")
-    console.print(f"  • Workers: [yellow]{company.get('workers', 'N/A')}[/yellow]")
-    console.print(f"  • Building Value: [yellow]${company.get('buildingValue', 0):,.0f}[/yellow]")
-    console.print()
-
-    # Configuration used
-    console.print("[bold cyan]Analysis Configuration:[/bold cyan]")
-    market_fee_display = "0%" if config.is_contract else "4%"
-    console.print(
-        f"  • Quality: [yellow]{config.quality}[/yellow] | "
-        f"Abundance: [yellow]{config.abundance}%[/yellow] | "
-        f"Market Fee: [yellow]{market_fee_display}[/yellow] | "
-        f"Admin Overhead: [yellow]{config.admin_overhead}%[/yellow] | "
-        f"Robots: [yellow]{'Yes' if config.has_robots else 'No'}[/yellow]"
-    )
-    console.print()
-
-    if not building_stats:
-        console.print("[yellow]No building data available for analysis.[/yellow]")
         return
 
-    # Buildings table
-    table = Table(
-        title="Building Performance Analysis",
-        show_header=True,
-        header_style="bold white on green",
-        box=box.ROUNDED,
-    )
-    table.add_column("Building", style="bold white")
-    table.add_column("Lv", justify="center", style="cyan")
-    table.add_column("Best Resource", style="magenta")
-    table.add_column("$/hour", justify="right", style="green")
-    table.add_column("$/day", justify="right", style="green")
-    table.add_column("Value", justify="right", style="yellow")
-    table.add_column("ROI/day", justify="right", style="bold cyan")
-    table.add_column("Break Even", justify="right", style="white")
-
-    total_hourly = 0.0
-    total_daily = 0.0
-    total_value = 0.0
-
-    for stat in building_stats:
-        total_hourly += stat["hourly_profit"]
-        total_daily += stat["daily_profit"]
-        total_value += stat["building_value"]
-
-        if stat["break_even_days"] == float("inf"):
-            break_even_str = "∞"
-        elif stat["daily_profit"] < 0:
-            break_even_str = "Never"
-        else:
-            break_even_str = f"{stat['break_even_days']:.1f} days"
-
-        warn = " (!)" if stat["missing_cost"] else ""
-        profit_style = "green" if stat["hourly_profit"] >= 0 else "red"
-
-        table.add_row(
-            stat["building_name"],
-            str(stat["level"]),
-            stat["best_resource"] or "N/A",
-            f"[{profit_style}]${stat['hourly_profit']:,.2f}[/{profit_style}]",
-            f"[{profit_style}]${stat['daily_profit']:,.2f}[/{profit_style}]",
-            f"${stat['building_value']:,.0f}{warn}",
-            f"{stat['roi_daily']:.2f}%",
-            break_even_str,
-        )
-
-    console.print(table)
-
-    # Summary
-    console.print("\n[bold magenta]Summary:[/bold magenta]")
-    profit_style = "green" if total_hourly >= 0 else "red"
-    console.print(f"  • Total Hourly Profit: [{profit_style}]${total_hourly:,.2f}[/{profit_style}]")
-    console.print(f"  • Total Daily Profit: [{profit_style}]${total_daily:,.2f}[/{profit_style}]")
-    console.print(f"  • Total Building Value: [yellow]${total_value:,.0f}[/yellow]")
-    if total_value > 0:
-        overall_roi = (total_daily / total_value) * 100
-        console.print(f"  • Overall Daily ROI: [cyan]{overall_roi:.2f}%[/cyan]")
-        if total_daily > 0:
-            overall_break_even = total_value / total_daily
-            console.print(f"  • Overall Break Even: [white]{overall_break_even:.1f} days[/white]")
-
-    if any(stat["missing_cost"] for stat in building_stats):
-        console.print(
-            "\n[yellow](!) Warning: Some building costs calculated with missing "
-            "material prices (assumed $0).[/yellow]"
-        )
-
-
-def display_upgrade_recommendations(
-    recommendations: list[dict],
-    config: ProfitConfig,
-    top_n: int = 10,
-) -> None:
-    """Display upgrade recommendations.
-
-    Args:
-        recommendations: List of upgrade recommendations sorted by marginal ROI.
-        config: Profit calculation configuration.
-        top_n: Number of top recommendations to display.
-    """
-    console.print("\n[bold blue]═══════════════════════════════════════════════════════════════[/bold blue]")
-    console.print("[bold blue]              UPGRADE RECOMMENDATIONS                          [/bold blue]")
-    console.print("[bold blue]═══════════════════════════════════════════════════════════════[/bold blue]\n")
-
-    if not recommendations:
-        console.print("[yellow]No upgrade recommendations available.[/yellow]")
-        return
-
-    console.print(
-        "[bold cyan]Recommendation based on marginal ROI:[/bold cyan] "
-        "The best upgrade is the one that gives the highest return on the upgrade cost."
-    )
-    console.print()
-
-    table = Table(
-        title=f"Top {min(top_n, len(recommendations))} Upgrade Recommendations",
-        show_header=True,
-        header_style="bold white on blue",
-        box=box.ROUNDED,
-    )
-    table.add_column("#", justify="center", style="bold white")
-    table.add_column("Building", style="bold white")
-    table.add_column("Upgrade", justify="center", style="cyan")
-    table.add_column("Best Resource", style="magenta")
-    table.add_column("Upgrade Cost", justify="right", style="yellow")
-    table.add_column("+$/day", justify="right", style="green")
-    table.add_column("Marginal ROI", justify="right", style="bold cyan")
-    table.add_column("Break Even", justify="right", style="white")
-
-    for i, rec in enumerate(recommendations[:top_n], 1):
-        if rec["marginal_break_even"] == float("inf"):
-            break_even_str = "∞"
-        elif rec["additional_daily_profit"] < 0:
-            break_even_str = "Never"
-        else:
-            break_even_str = f"{rec['marginal_break_even']:.1f} days"
-
-        warn = " (!)" if rec["missing_cost"] else ""
-        profit_style = "green" if rec["additional_daily_profit"] >= 0 else "red"
-
-        # Highlight top recommendation
-        rank_style = "bold green" if i == 1 else "white"
-
-        table.add_row(
-            f"[{rank_style}]{i}[/{rank_style}]",
-            rec["building_name"],
-            f"Lv{rec['current_level']}→{rec['next_level']}",
-            rec["best_resource"],
-            f"${rec['upgrade_cost']:,.0f}{warn}",
-            f"[{profit_style}]+${rec['additional_daily_profit']:,.2f}[/{profit_style}]",
-            f"{rec['marginal_roi']:.2f}%",
-            break_even_str,
-        )
-
-    console.print(table)
-
-    if recommendations:
-        best = recommendations[0]
-        console.print(
-            f"\n[bold green]★ Recommended next upgrade:[/bold green] "
-            f"[bold]{best['building_name']}[/bold] from Level {best['current_level']} to "
-            f"Level {best['next_level']}"
-        )
-        console.print(
-            f"  Cost: [yellow]${best['upgrade_cost']:,.0f}[/yellow] → "
-            f"Adds [green]+${best['additional_daily_profit']:,.2f}/day[/green] → "
-            f"ROI: [cyan]{best['marginal_roi']:.2f}%[/cyan]"
-        )
-
-    if any(rec["missing_cost"] for rec in recommendations[:top_n]):
-        console.print(
-            "\n[yellow](!) Warning: Some upgrade costs calculated with missing "
-            "material prices (assumed $0).[/yellow]"
-        )
-
-
-def prompt_building_levels(
-    building_ids: dict[str, int],
-    buildings: list[Building],
-) -> dict[str, int]:
-    """Prompt the user to enter building levels interactively.
-
-    Args:
-        building_ids: Dict of building ID to count from API.
-        buildings: List of all Building instances.
-
-    Returns:
-        Dict of building ID to level.
-    """
-    # Create lookup from building ID to building name
-    id_to_name = {b.id: b.name for b in buildings}
-
-    console.print("\n[bold cyan]Enter building levels:[/bold cyan]")
-    console.print("(Press Enter to use default level 1)")
-    console.print()
-
-    building_levels = {}
-
-    for building_id, count in building_ids.items():
-        building_name = id_to_name.get(building_id)
-
-        # Skip buildings that are not in buildings.json
-        if building_name is None:
-            console.print(f"[yellow]Skipping unknown building (ID: {building_id}) - not in buildings.json[/yellow]")
+    comparisons = []
+    for res in search_filtered:
+        market_price = game_data.price_maps.current_quality.get(res.id, 0)
+        if market_price == 0:
+            console.print(
+                f"[yellow]Warning: No market price found for {res.name} "
+                f"at Quality {config.quality}[/yellow]"
+            )
             continue
 
-        if count > 1:
-            console.print(f"[bold]{building_name}[/bold] (x{count}):")
-            for i in range(count):
-                while True:
-                    try:
-                        level_input = console.input(f"  Building #{i+1} level: ")
-                        if level_input.strip() == "":
-                            level = 1
-                        else:
-                            level = int(level_input)
-                        if level < 1:
-                            console.print("[red]Level must be at least 1[/red]")
-                            continue
-                        break
-                    except ValueError:
-                        console.print("[red]Please enter a valid number[/red]")
-
-                # Use building_id with index for multiple buildings of same type
-                building_levels[f"{building_id}_{i}"] = level
-        else:
-            while True:
-                try:
-                    level_input = console.input(f"[bold]{building_name}[/bold] level: ")
-                    if level_input.strip() == "":
-                        level = 1
-                    else:
-                        level = int(level_input)
-                    if level < 1:
-                        console.print("[red]Level must be at least 1[/red]")
-                        continue
-                    break
-                except ValueError:
-                    console.print("[red]Please enter a valid number[/red]")
-
-            building_levels[building_id] = level
-
-    return building_levels
-
-
-def display_genetic_results(
-    best_individual,
-    fitness_history: list[float],
-    config: SimulationConfig,
-    ga: GeneticAlgorithm,
-) -> None:
-    """Display genetic algorithm results.
-
-    Args:
-        best_individual: The best individual from the genetic algorithm.
-        fitness_history: List of best fitness values per generation.
-        config: Simulation configuration used.
-        ga: The GeneticAlgorithm instance for calculating costs.
-    """
-    console.print("\n[bold blue]═══════════════════════════════════════════════════════════════[/bold blue]")
-    console.print("[bold blue]              GENETIC ALGORITHM RESULTS                        [/bold blue]")
-    console.print("[bold blue]═══════════════════════════════════════════════════════════════[/bold blue]\n")
-
-    # Configuration summary
-    console.print("[bold cyan]Configuration:[/bold cyan]")
-    console.print(f"  • Building Slots: [yellow]{config.slots}[/yellow]")
-    console.print(f"  • Max Budget: [yellow]${config.budget:,.0f}[/yellow]")
-    console.print(f"  • Population Size: [yellow]{config.population_size}[/yellow]")
-    console.print(f"  • Generations: [yellow]{config.generations}[/yellow]")
-    console.print(f"  • Max Building Level: [yellow]{config.max_level}[/yellow]")
-    console.print(f"  • Mutation Rate: [yellow]{config.mutation_rate:.1%}[/yellow]")
-    console.print(f"  • Crossover Rate: [yellow]{config.crossover_rate:.1%}[/yellow]")
-    console.print()
-
-    # Best configuration
-    console.print("[bold green]Best Building Configuration:[/bold green]")
-
-    if best_individual.genes:
-        table = Table(
-            show_header=True,
-            header_style="bold white on green",
-            box=box.ROUNDED,
+        comparison = compare_market_vs_contract(
+            resource=res,
+            market_price=market_price,
+            contract_price=args.contract_price,
+            input_prices=game_data.price_maps.current_quality,
+            transport_price=game_data.price_maps.transport_price,
+            config=config,
         )
-        table.add_column("Building", style="bold white")
-        table.add_column("Produces", style="magenta")
-        table.add_column("Level", justify="center", style="cyan")
-        table.add_column("Cost", justify="right", style="yellow")
+        comparisons.append(comparison)
 
-        for gene in best_individual.genes:
-            cost = ga.calculate_building_cost(gene.building_name, gene.level)
-            # Get the resource this building will produce (most profitable one)
-            resource = ga.get_best_resource_for_building(gene.building_name)
-            resource_name = resource.name if resource else "N/A"
-            table.add_row(
-                gene.building_name,
-                resource_name,
-                str(gene.level),
-                f"${cost:,.0f}",
+    if comparisons:
+        display_compare_table(
+            comparisons, game_data.price_maps.transport_price, config
+        )
+    else:
+        console.print(
+            f"[bold red]No valid comparisons could be made. "
+            f"Check that resources have market prices at Quality {config.quality}[/bold red]"
+        )
+
+
+def handle_genetic_command(
+    args: argparse.Namespace,
+    game_data,
+    config: ProfitConfig,
+) -> None:
+    """Handle the genetic subcommand."""
+    filtered_resources = game_data.filter_resources(
+        exclude_seasonal=getattr(args, "exclude_seasonal", False),
+    )
+
+    sim_config = SimulationConfig(
+        slots=args.slots,
+        budget=args.budget,
+        population_size=args.population_size,
+        generations=args.generations,
+        mutation_rate=args.mutation_rate,
+        crossover_rate=args.crossover_rate,
+        max_level=args.max_level,
+        elitism=args.elitism,
+        tournament_size=args.tournament_size,
+        budget_penalty_factor=args.budget_penalty_factor,
+    )
+
+    ga = GeneticAlgorithm(
+        config=sim_config,
+        buildings=game_data.buildings,
+        resources=filtered_resources,
+        price_map=game_data.price_maps.current_quality,
+        q0_price_map=game_data.price_maps.quality_zero,
+        transport_price=game_data.price_maps.transport_price,
+        name_to_id=game_data.name_to_id,
+        abundance=args.abundance,
+        admin_overhead=args.admin_overhead,
+        has_robots=args.robots,
+    )
+
+    console.print("\n[bold blue]Starting Genetic Algorithm Optimization...[/bold blue]\n")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(
+            "[cyan]Evolving population...",
+            total=sim_config.generations,
+        )
+
+        def update_progress(gen: int, best: float, avg: float) -> None:
+            progress.update(
+                task,
+                completed=gen,
+                description=f"[cyan]Gen {gen}/{sim_config.generations} | Best: ${best:,.0f} | Avg: ${avg:,.0f}",
             )
 
-        console.print(table)
-    else:
-        console.print("  [red]No buildings in best configuration[/red]")
+        best_individual, fitness_history = ga.run(progress_callback=update_progress)
 
-    console.print()
-
-    # Summary statistics
-    budget_status = "WITHIN" if best_individual.total_cost <= config.budget else "OVER"
-    budget_style = "green" if budget_status == "WITHIN" else "red"
-
-    console.print("[bold magenta]Results Summary:[/bold magenta]")
-    console.print(f"  • Total Investment: [yellow]${best_individual.total_cost:,.0f}[/yellow]")
-    console.print(f"  • Budget Status: [{budget_style}]{budget_status}[/{budget_style}] ({best_individual.total_cost / config.budget * 100:.1f}% of budget)")
-    console.print(f"  • Buildings Used: [yellow]{len(best_individual.genes)}[/yellow] / {config.slots} slots")
-
-    profit_style = "green" if best_individual.fitness >= 0 else "red"
-    console.print(f"  • 48-Hour Profit: [{profit_style}]${best_individual.fitness:,.2f}[/{profit_style}]")
-
-    if best_individual.fitness > 0:
-        hourly = best_individual.fitness / 48
-        daily = hourly * 24
-        console.print(f"  • Hourly Profit: [green]${hourly:,.2f}[/green]")
-        console.print(f"  • Daily Profit: [green]${daily:,.2f}[/green]")
-        if best_individual.total_cost > 0:
-            roi_days = best_individual.total_cost / daily
-            console.print(f"  • ROI Break-even: [cyan]{roi_days:.1f} days[/cyan]")
-
-    console.print()
-
-    # Fitness graph
-    if fitness_history:
-        console.print("[bold blue]Fitness Evolution Graph:[/bold blue]")
-        # Adapt width to data size (min 30, max 60)
-        graph_width = min(60, max(30, len(fitness_history)))
-        graph_lines = render_ascii_graph(fitness_history, width=graph_width, height=12)
-        for line in graph_lines:
-            console.print(f"  {line}")
-
-    console.print()
+    display_genetic_results(best_individual, fitness_history, sim_config, ga)
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments using subcommands.
+def handle_analyze_command(
+    args: argparse.Namespace,
+    api: SimcoAPI,
+    game_data,
+    config: ProfitConfig,
+) -> None:
+    """Handle the analyze subcommand."""
+    company_data = api.get_company(args.user_id)
+    company = company_data.get("company", {})
 
-    Returns:
-        Parsed arguments namespace.
-    """
-    # Create parent parser for common arguments
+    if not company:
+        console.print(
+            f"[bold red]No company data found for user ID {args.user_id}[/bold red]"
+        )
+        return
+
+    company_buildings = company.get("buildings", {})
+    if not company_buildings:
+        console.print("[bold red]No buildings found in company data[/bold red]")
+        return
+
+    building_levels = prompt_building_levels(company_buildings, game_data.buildings)
+
+    id_to_building = {b.id: b for b in game_data.buildings}
+
+    filtered_resources = game_data.filter_resources(
+        exclude_seasonal=getattr(args, "exclude_seasonal", False),
+    )
+    filtered_resource_by_name = {r.name.lower(): r for r in filtered_resources}
+
+    building_resources: dict[str, list] = {}
+    for building in game_data.buildings:
+        res_list = []
+        for res_name in building.produces:
+            res = filtered_resource_by_name.get(res_name.lower())
+            if res:
+                res_list.append(res)
+        if res_list:
+            building_resources[building.name] = res_list
+
+    building_stats = []
+    buildings_with_levels: list[tuple] = []
+
+    for building_key, level in building_levels.items():
+        if "_" in building_key:
+            building_id = building_key.rsplit("_", 1)[0]
+        else:
+            building_id = building_key
+
+        building = id_to_building.get(building_id)
+        if not building:
+            console.print(f"[yellow]Warning: Unknown building ID '{building_id}'[/yellow]")
+            continue
+
+        building_res = building_resources.get(building.name, [])
+
+        stat = calculate_company_building_stats(
+            building=building,
+            level=level,
+            resources=building_res,
+            price_map=game_data.price_maps.current_quality,
+            transport_price=game_data.price_maps.transport_price,
+            config=config,
+            q0_price_map=game_data.price_maps.quality_zero,
+            name_to_id=game_data.name_to_id,
+        )
+        building_stats.append(stat)
+        buildings_with_levels.append((building, level))
+
+    display_company_analysis(company_data, building_stats, config)
+
+    recommendations = calculate_upgrade_recommendations(
+        buildings_with_levels=buildings_with_levels,
+        building_resources=building_resources,
+        price_map=game_data.price_maps.current_quality,
+        transport_price=game_data.price_maps.transport_price,
+        config=config,
+        q0_price_map=game_data.price_maps.quality_zero,
+        name_to_id=game_data.name_to_id,
+    )
+
+    display_upgrade_recommendations(recommendations, config, top_n=args.top_n)
+
+
+# =============================================================================
+# Argument Parsing
+# =============================================================================
+
+
+def _create_parent_parser() -> argparse.ArgumentParser:
+    """Create the parent parser with common arguments."""
     parent_parser = argparse.ArgumentParser(add_help=False)
     parent_parser.add_argument(
         "-q", "--quality", type=int, default=0, help="Quality level (default: 0)"
     )
     parent_parser.add_argument(
-        "-a",
-        "--abundance",
-        type=float,
-        default=90,
+        "-a", "--abundance", type=float, default=90,
         help="Abundance percentage for mine/well resources (default: 90)",
     )
     parent_parser.add_argument(
-        "-c",
-        "--contract",
-        action="store_true",
+        "-c", "--contract", action="store_true",
         help="Direct contract mode (0%% market fee, 50%% transport)",
     )
     parent_parser.add_argument(
-        "-r",
-        "--robots",
-        action="store_true",
-        help="Apply 3%% wage reduction",
+        "-r", "--robots", action="store_true", help="Apply 3%% wage reduction",
     )
     parent_parser.add_argument(
-        "-o",
-        "--overhead",
-        type=float,
-        default=0,
-        dest="admin_overhead",
+        "-o", "--overhead", type=float, default=0, dest="admin_overhead",
         help="Admin overhead percentage (default: 0)",
     )
     parent_parser.add_argument(
-        "-e",
-        "--no-seasonal",
-        action="store_true",
-        dest="exclude_seasonal",
+        "-e", "--no-seasonal", action="store_true", dest="exclude_seasonal",
         help="Exclude seasonal resources",
     )
+    return parent_parser
 
-    # Main parser
+
+def _add_subparsers(parser: argparse.ArgumentParser, parent_parser: argparse.ArgumentParser) -> None:
+    """Add all subcommand parsers."""
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    subparsers.required = False
+
+    # profit subcommand
+    profit_parser = subparsers.add_parser(
+        "profit", parents=[parent_parser],
+        help="Calculate production profits",
+        description="Calculate and display production profits for resources",
+    )
+    profit_parser.add_argument("-b", "--building", type=str, nargs="+", help="Filter by building name")
+    profit_parser.add_argument("-s", "--search", type=str, nargs="+", help="Search resources by name")
+
+    # roi subcommand
+    roi_parser = subparsers.add_parser(
+        "roi", parents=[parent_parser],
+        help="Building ROI analysis",
+        description="Analyze return on investment for buildings",
+    )
+    roi_parser.add_argument("-b", "--building", type=str, nargs="+", help="Filter by building name")
+    roi_parser.add_argument("-l", "--level", type=int, default=20, dest="max_level", help="Maximum building level")
+    roi_parser.add_argument("-p", "--per-step", action="store_true", dest="step_roi", help="Calculate per-upgrade-step ROI")
+
+    # lifecycle subcommand
+    lifecycle_parser = subparsers.add_parser(
+        "lifecycle", parents=[parent_parser],
+        help="Abundance decay/lifecycle analysis",
+        description="Calculate lifecycle ROI for abundance resources",
+    )
+    lifecycle_parser.add_argument("-b", "--building", type=str, nargs="+", help="Filter by building name")
+    lifecycle_parser.add_argument("-l", "--level", type=int, default=20, dest="max_level", help="Maximum building level")
+    lifecycle_parser.add_argument("-t", "--time", type=float, default=0.0, dest="build_time", help="Base build time in hours")
+
+    # prospect subcommand
+    prospect_parser = subparsers.add_parser("prospect", help="Prospecting simulation")
+    prospect_parser.add_argument("-t", "--target", type=float, required=True, dest="abundance", help="Target abundance percentage")
+    prospect_parser.add_argument("-d", "--duration", type=float, default=12, dest="time", help="Build time per attempt in hours")
+    prospect_parser.add_argument("-s", "--slots", type=int, default=1, help="Number of building slots")
+
+    # debug subcommand
+    debug_parser = subparsers.add_parser("debug", help="Debugging utilities")
+    debug_parser.add_argument("-u", "--unassigned", action="store_true", dest="debug_unassigned", help="List unassigned resources")
+
+    # compare subcommand
+    compare_parser = subparsers.add_parser("compare", parents=[parent_parser], help="Compare market vs contract sales")
+    compare_parser.add_argument("-s", "--search", type=str, nargs="+", required=True, help="Search resources by name")
+    compare_parser.add_argument("-p", "--price", type=float, required=True, dest="contract_price", help="Contract price per unit")
+
+    # genetic subcommand
+    genetic_parser = subparsers.add_parser("genetic", parents=[parent_parser], help="Genetic algorithm optimization")
+    genetic_parser.add_argument("-s", "--slots", type=int, default=5, help="Number of building slots")
+    genetic_parser.add_argument("-b", "--budget", type=float, default=100000, help="Maximum investment budget")
+    genetic_parser.add_argument("-p", "--population", type=int, default=50, dest="population_size", help="Population size")
+    genetic_parser.add_argument("-g", "--generations", type=int, default=100, help="Number of generations")
+    genetic_parser.add_argument("-m", "--mutation-rate", type=float, default=0.1, dest="mutation_rate", help="Mutation rate")
+    genetic_parser.add_argument("-x", "--crossover-rate", type=float, default=0.7, dest="crossover_rate", help="Crossover rate")
+    genetic_parser.add_argument("-l", "--max-level", type=int, default=10, dest="max_level", help="Maximum building level")
+    genetic_parser.add_argument("-t", "--tournament-size", type=int, default=3, dest="tournament_size", help="Tournament size")
+    genetic_parser.add_argument("--elitism", type=int, default=2, help="Number of elite individuals to preserve")
+    genetic_parser.add_argument("--budget-penalty", type=float, default=2.0, dest="budget_penalty_factor", help="Budget penalty factor")
+
+    # analyze subcommand
+    analyze_parser = subparsers.add_parser("analyze", parents=[parent_parser], help="Interactive company analysis")
+    analyze_parser.add_argument("-u", "--user-id", type=int, required=True, dest="user_id", help="User ID to fetch company data")
+    analyze_parser.add_argument("-n", "--top-n", type=int, default=10, dest="top_n", help="Number of recommendations to show")
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments.
+
+    Returns:
+        Parsed arguments namespace.
+    """
+    parent_parser = _create_parent_parser()
+
     parser = argparse.ArgumentParser(
         description="Simtools - Sim Companies calculation toolkit",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    
+
     # Add common flags at top level for backwards compatibility
-    # NOTE: These are intentionally duplicated from parent_parser to support
-    # usage without subcommands (e.g., "simtools -a 85" defaults to profit)
-    parser.add_argument(
-        "-q", "--quality", type=int, default=0, help="Quality level (default: 0)"
-    )
-    parser.add_argument(
-        "-a",
-        "--abundance",
-        type=float,
-        default=90,
-        help="Abundance percentage for mine/well resources (default: 90)",
-    )
-    parser.add_argument(
-        "-c",
-        "--contract",
-        action="store_true",
-        help="Direct contract mode (0%% market fee, 50%% transport)",
-    )
-    parser.add_argument(
-        "-r",
-        "--robots",
-        action="store_true",
-        help="Apply 3%% wage reduction",
-    )
-    parser.add_argument(
-        "-o",
-        "--overhead",
-        type=float,
-        default=0,
-        dest="admin_overhead",
-        help="Admin overhead percentage (default: 0)",
-    )
-    parser.add_argument(
-        "-b", "--building", type=str, nargs="+", help="Filter by building name"
-    )
-    parser.add_argument(
-        "-s",
-        "--search",
-        type=str,
-        nargs="+",
-        help="Search resources by name (case-insensitive)",
-    )
-    parser.add_argument(
-        "-e",
-        "--no-seasonal",
-        action="store_true",
-        dest="exclude_seasonal",
-        help="Exclude seasonal resources",
-    )
-    
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-    
-    # Make the subparser optional by setting required=False
-    subparsers.required = False
+    parser.add_argument("-q", "--quality", type=int, default=0, help="Quality level (default: 0)")
+    parser.add_argument("-a", "--abundance", type=float, default=90, help="Abundance percentage")
+    parser.add_argument("-c", "--contract", action="store_true", help="Direct contract mode")
+    parser.add_argument("-r", "--robots", action="store_true", help="Apply 3%% wage reduction")
+    parser.add_argument("-o", "--overhead", type=float, default=0, dest="admin_overhead", help="Admin overhead percentage")
+    parser.add_argument("-b", "--building", type=str, nargs="+", help="Filter by building name")
+    parser.add_argument("-s", "--search", type=str, nargs="+", help="Search resources by name")
+    parser.add_argument("-e", "--no-seasonal", action="store_true", dest="exclude_seasonal", help="Exclude seasonal resources")
 
-    # profit subcommand - default/main functionality
-    profit_parser = subparsers.add_parser(
-        "profit",
-        parents=[parent_parser],
-        help="Calculate production profits",
-        description="Calculate and display production profits for resources",
-    )
-    profit_parser.add_argument(
-        "-b", "--building", type=str, nargs="+", help="Filter by building name"
-    )
-    profit_parser.add_argument(
-        "-s",
-        "--search",
-        type=str,
-        nargs="+",
-        help="Search resources by name (case-insensitive)",
-    )
-
-    # roi subcommand
-    roi_parser = subparsers.add_parser(
-        "roi",
-        parents=[parent_parser],
-        help="Building ROI analysis",
-        description="Analyze return on investment for buildings",
-    )
-    roi_parser.add_argument(
-        "-b", "--building", type=str, nargs="+", help="Filter by building name"
-    )
-    roi_parser.add_argument(
-        "-l",
-        "--level",
-        type=int,
-        default=20,
-        dest="max_level",
-        help="Maximum building level (default: 20)",
-    )
-    roi_parser.add_argument(
-        "-p",
-        "--per-step",
-        action="store_true",
-        dest="step_roi",
-        help="Calculate per-upgrade-step ROI",
-    )
-
-    # lifecycle subcommand
-    lifecycle_parser = subparsers.add_parser(
-        "lifecycle",
-        parents=[parent_parser],
-        help="Abundance decay/lifecycle analysis",
-        description="Calculate lifecycle ROI for abundance resources",
-    )
-    lifecycle_parser.add_argument(
-        "-b", "--building", type=str, nargs="+", help="Filter by building name"
-    )
-    lifecycle_parser.add_argument(
-        "-l",
-        "--level",
-        type=int,
-        default=20,
-        dest="max_level",
-        help="Maximum building level (default: 20)",
-    )
-    lifecycle_parser.add_argument(
-        "-t",
-        "--time",
-        type=float,
-        default=0.0,
-        dest="build_time",
-        help="Base build time in hours",
-    )
-
-    # prospect subcommand
-    prospect_parser = subparsers.add_parser(
-        "prospect",
-        help="Prospecting simulation",
-        description="Simulate prospecting to find target abundance",
-    )
-    prospect_parser.add_argument(
-        "-t",
-        "--target",
-        type=float,
-        required=True,
-        dest="abundance",
-        help="Target abundance percentage",
-    )
-    prospect_parser.add_argument(
-        "-d",
-        "--duration",
-        type=float,
-        default=12,
-        dest="time",
-        help="Build time per attempt in hours (default: 12)",
-    )
-    prospect_parser.add_argument(
-        "-s",
-        "--slots",
-        type=int,
-        default=1,
-        help="Number of building slots (default: 1)",
-    )
-
-    # debug subcommand
-    debug_parser = subparsers.add_parser(
-        "debug",
-        help="Debugging utilities",
-        description="Various debugging and diagnostic tools",
-    )
-    debug_parser.add_argument(
-        "-u",
-        "--unassigned",
-        action="store_true",
-        dest="debug_unassigned",
-        help="List resources not assigned to any building",
-    )
-
-    # compare subcommand
-    compare_parser = subparsers.add_parser(
-        "compare",
-        parents=[parent_parser],
-        help="Compare market vs contract sales",
-        description="Compare selling on the market vs selling via contracts with a custom contract price",
-    )
-    compare_parser.add_argument(
-        "-s",
-        "--search",
-        type=str,
-        nargs="+",
-        required=True,
-        help="Search resources by name (case-insensitive)",
-    )
-    compare_parser.add_argument(
-        "-p",
-        "--price",
-        type=float,
-        required=True,
-        dest="contract_price",
-        help="Contract price per unit (e.g., 97.5)",
-    )
-
-    # genetic subcommand
-    genetic_parser = subparsers.add_parser(
-        "genetic",
-        parents=[parent_parser],
-        help="Genetic algorithm optimization",
-        description="Use genetic algorithm to find optimal building configuration for maximum profit",
-    )
-    genetic_parser.add_argument(
-        "-s",
-        "--slots",
-        type=int,
-        default=5,
-        help="Number of building slots (default: 5)",
-    )
-    genetic_parser.add_argument(
-        "-b",
-        "--budget",
-        type=float,
-        default=100000,
-        help="Maximum investment budget (default: 100000)",
-    )
-    genetic_parser.add_argument(
-        "-p",
-        "--population",
-        type=int,
-        default=50,
-        dest="population_size",
-        help="Population size (default: 50)",
-    )
-    genetic_parser.add_argument(
-        "-g",
-        "--generations",
-        type=int,
-        default=100,
-        help="Number of generations (default: 100)",
-    )
-    genetic_parser.add_argument(
-        "-m",
-        "--mutation-rate",
-        type=float,
-        default=0.1,
-        dest="mutation_rate",
-        help="Mutation rate 0.0-1.0 (default: 0.1)",
-    )
-    genetic_parser.add_argument(
-        "-x",
-        "--crossover-rate",
-        type=float,
-        default=0.7,
-        dest="crossover_rate",
-        help="Crossover rate 0.0-1.0 (default: 0.7)",
-    )
-    genetic_parser.add_argument(
-        "-l",
-        "--max-level",
-        type=int,
-        default=10,
-        dest="max_level",
-        help="Maximum building level (default: 10)",
-    )
-    genetic_parser.add_argument(
-        "-t",
-        "--tournament-size",
-        type=int,
-        default=3,
-        dest="tournament_size",
-        help="Tournament size for selection (default: 3)",
-    )
-    genetic_parser.add_argument(
-        "--elitism",
-        type=int,
-        default=2,
-        help="Number of best individuals to preserve (default: 2)",
-    )
-    genetic_parser.add_argument(
-        "--budget-penalty",
-        type=float,
-        default=2.0,
-        dest="budget_penalty_factor",
-        help="Penalty factor for budget overage (default: 2.0)",
-    )
-
-    # analyze subcommand
-    analyze_parser = subparsers.add_parser(
-        "analyze",
-        parents=[parent_parser],
-        help="Interactive company analysis",
-        description="Analyze a player's company setup and provide upgrade recommendations",
-    )
-    analyze_parser.add_argument(
-        "-u",
-        "--user-id",
-        type=int,
-        required=True,
-        dest="user_id",
-        help="User ID to fetch company data for",
-    )
-    analyze_parser.add_argument(
-        "-n",
-        "--top-n",
-        type=int,
-        default=10,
-        dest="top_n",
-        help="Number of upgrade recommendations to show (default: 10)",
-    )
+    _add_subparsers(parser, parent_parser)
 
     args = parser.parse_args()
-    
-    # Set default command to 'profit' if none specified
+
+    # Default to 'profit' command if none specified
     if args.command is None:
         args.command = "profit"
-    
+
     return args
+
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
 
 
 def main() -> None:
     """Main entry point for the CLI."""
     args = parse_args()
 
-    # Handle prospecting simulation
+    # Handle prospect command (doesn't need API data)
     if args.command == "prospect":
-        results = simulate_prospecting(args.abundance / 100, args.time, args.slots)
-        display_prospecting_results(results)
+        handle_prospect_command(args)
         return
 
-    # Handle debug commands
-    if args.command == "debug":
-        if hasattr(args, "debug_unassigned") and args.debug_unassigned:
-            # Load data files
-            buildings = Building.load_all(get_data_path("buildings.json"))
-            resource_to_building = build_resource_to_building_map(buildings)
-            
-            # Fetch API data
-            api = SimcoAPI(realm=0)
-            try:
-                resources_data = api.get_resources()
-                raw_resources = resources_data.get("resources", [])
-                
-                unassigned = [
-                    res.get("name")
-                    for res in raw_resources
-                    if res.get("name", "").lower() not in resource_to_building
-                ]
-                unassigned.sort()
-                console.print("\n[bold red]Resources not assigned to any building:[/bold red]")
-                for name in unassigned:
-                    console.print(f" - {name}")
-            except Exception as exc:
-                console.print(f"[bold red]Error fetching data: {exc}[/bold red]")
-                raise
-        else:
-            # No debug option specified, show help
-            console.print("[yellow]No debug option specified. Use -u/--unassigned[/yellow]")
-        return
-
-    # For all other commands (profit, roi, lifecycle), we need full data
-    # Load data files
-    abundance_resources = load_json_list(get_data_path("abundance_resources.json"))
-    seasonal_resources = load_json_list(get_data_path("seasonal_resources.json"))
-    buildings = Building.load_all(get_data_path("buildings.json"))
-    resource_to_building = build_resource_to_building_map(buildings)
-
-    # Fetch API data
+    # Initialize API
     api = SimcoAPI(realm=0)
 
+    # Handle debug command
+    if args.command == "debug":
+        try:
+            handle_debug_command(args, api)
+        except Exception as exc:
+            console.print(f"[bold red]Error fetching data: {exc}[/bold red]")
+            raise
+        return
+
+    # For all other commands, load full game data
     try:
-        resources_data = api.get_resources()
-        raw_resources = resources_data.get("resources", [])
+        game_data = load_game_data(api, target_quality=args.quality)
 
-        vwaps_data = api.get_market_vwaps()
-
-        # Save API data
-        save_json(resources_data, "resources.json")
-        save_json(vwaps_data, "vwaps.json")
-
-        # Build price maps
-        price_map: dict[int, float] = {}
-        q0_price_map: dict[int, float] = {}
-
-        if isinstance(vwaps_data, list):
-            for entry in vwaps_data:
-                if isinstance(entry, dict):
-                    r_id = entry.get("resourceId")
-                    quality = entry.get("quality")
-                    vwap = entry.get("vwap")
-                    if r_id is not None and vwap is not None:
-                        if quality == args.quality:
-                            price_map[int(r_id)] = vwap
-                        if quality == 0:
-                            q0_price_map[int(r_id)] = vwap
-
-        # Build name to ID map
-        name_to_id = {r.get("name", "").lower(): r.get("id") for r in raw_resources}
-
-        # Get transport price
-        transport_id = None
-        for res in raw_resources:
-            if res.get("name", "").lower() == "transport":
-                transport_id = res.get("id")
-                break
-
-        if transport_id is None:
-            for res in raw_resources:
-                if "transport" in res.get("name", "").lower():
-                    transport_id = res.get("id")
-                    break
-
-        transport_price = 0.0
-        if transport_id is not None:
-            if isinstance(vwaps_data, list):
-                for entry in vwaps_data:
-                    if (
-                        isinstance(entry, dict)
-                        and entry.get("resourceId") == transport_id
-                        and entry.get("quality") == 0
-                    ):
-                        transport_price = entry.get("vwap", 0)
-                        break
-        else:
-            console.print("[yellow]Warning: Could not find 'Transport' resource by name.[/yellow]")
-
-        # Create Resource objects
-        resources = [
-            Resource.from_api_data(
-                data,
-                abundance_resources=[r.lower() for r in abundance_resources],
-                seasonal_resources=[r.lower() for r in seasonal_resources],
-            )
-            for data in raw_resources
-        ]
-
-        # Link resources to buildings
-        resource_by_name = {r.name.lower(): r for r in resources}
-        for building in buildings:
-            building.link_resources(resource_by_name)
-
-        # Set building names on resources
-        for res in resources:
-            building_name = resource_to_building.get(res.name.lower())
-            if building_name:
-                res.building_name = building_name
-
-        # Filter resources
-        filtered_resources = resources
-
-        # Exclude seasonal if requested (available across all commands via parent parser)
-        if hasattr(args, "exclude_seasonal") and args.exclude_seasonal:
-            filtered_resources = [r for r in filtered_resources if not r.is_seasonal]
-
-        # Filter by building
-        if hasattr(args, "building") and args.building:
-            filtered_resources = [
-                r
-                for r in filtered_resources
-                if r.building_name
-                and any(term.lower() in r.building_name.lower() for term in args.building)
-            ]
-
-        # Filter by search terms (only for profit command)
-        if args.command == "profit" and hasattr(args, "search") and args.search:
-            filtered_resources = [
-                r
-                for r in filtered_resources
-                if any(term.lower() in r.name.lower() for term in args.search)
-            ]
-
-        # Create lookup for filtered resources (used by analyze and genetic commands)
-        filtered_resource_by_name = {r.name.lower(): r for r in filtered_resources}
-
-        # Calculate profits
+        # Create profit configuration
         config = ProfitConfig(
             quality=args.quality,
             abundance=args.abundance,
@@ -1321,279 +549,34 @@ def main() -> None:
             has_robots=args.robots,
         )
 
-        profits = calculate_all_profits(filtered_resources, price_map, transport_price, config)
+        # Filter resources based on command-specific needs
+        filtered_resources = game_data.filter_resources(
+            exclude_seasonal=getattr(args, "exclude_seasonal", False),
+            building_filter=getattr(args, "building", None),
+            search_filter=getattr(args, "search", None) if args.command == "profit" else None,
+        )
 
-        # Handle lifecycle command
+        # Calculate profits for commands that need them
+        profits = calculate_all_profits(
+            filtered_resources,
+            game_data.price_maps.current_quality,
+            game_data.price_maps.transport_price,
+            config,
+        )
+
+        # Route to appropriate command handler
         if args.command == "lifecycle":
-            # Lifecycle Analysis
-            abundance_res_objects = [r for r in filtered_resources if r.is_abundance]
-            
-            lifecycle_results = []
-            for res in abundance_res_objects:
-                # Find the building
-                if not res.building_name:
-                    continue
-                # We need the building object
-                building = next((b for b in buildings if b.name == res.building_name), None)
-                if not building:
-                    continue
-
-                res_results = calculate_lifecycle_roi(
-                    building=building,
-                    resource=res,
-                    profit_config=config,
-                    current_prices=price_map,
-                    q0_prices=q0_price_map,
-                    transport_price=transport_price,
-                    name_to_id=name_to_id,
-                    start_abundance=args.abundance / 100.0,
-                    max_level=args.max_level,
-                    base_build_time=args.build_time,
-                )
-                lifecycle_results.extend(res_results)
-            
-            # Sort by Net Profit
-            lifecycle_results.sort(key=lambda x: x["net_profit"], reverse=True)
-            
-            display_lifecycle_table(lifecycle_results, args.abundance)
-            return
-
-        # Handle ROI command
-        if args.command == "roi":
-            if hasattr(args, "building") and args.building:
-                # Generate level-based ROI for filtered buildings
-                res_profit_map = {p["name"].lower(): p for p in profits}
-                all_roi_data = []
-                for building in buildings:
-                    best_profit = -float("inf")
-                    best_p_data = None
-                    for res_name in building.produces:
-                        res_name_lower = res_name.lower()
-                        if res_name_lower in res_profit_map:
-                            p_data = res_profit_map[res_name_lower]
-                            if p_data["profit_per_hour"] > best_profit:
-                                best_profit = p_data["profit_per_hour"]
-                                best_p_data = p_data
-                    
-                    if best_p_data:
-                        all_roi_data.extend(
-                            calculate_level_roi(
-                                building,
-                                best_p_data,
-                                q0_price_map,
-                                name_to_id,
-                                max_level=args.max_level,
-                                step_mode=args.step_roi,
-                            )
-                        )
-                display_roi_table(all_roi_data)
-            else:
-                roi_data = calculate_building_roi(buildings, profits, q0_price_map, name_to_id)
-                display_roi_table(roi_data)
-            return
-
-        # Handle profit command (default display)
-        if args.command == "profit":
-            display_profits_table(
-                profits, 
-                transport_price, 
-                config, 
-                search_terms=args.search if hasattr(args, "search") else None, 
-                building_terms=args.building if hasattr(args, "building") else None
-            )
-
-        # Handle compare command
-        if args.command == "compare":
-            # Filter resources by search terms
-            search_filtered = [
-                r
-                for r in filtered_resources
-                if any(term.lower() in r.name.lower() for term in args.search)
-            ]
-
-            if not search_filtered:
-                console.print(
-                    f"[bold red]No resources found matching search terms: {', '.join(args.search)}[/bold red]"
-                )
-                return
-
-            # Calculate comparisons for each resource
-            comparisons = []
-            for res in search_filtered:
-                market_price = price_map.get(res.id, 0)
-                if market_price == 0:
-                    console.print(
-                        f"[yellow]Warning: No market price found for {res.name} at Quality {config.quality}[/yellow]"
-                    )
-                    continue
-
-                comparison = compare_market_vs_contract(
-                    resource=res,
-                    market_price=market_price,
-                    contract_price=args.contract_price,
-                    input_prices=price_map,
-                    transport_price=transport_price,
-                    config=config,
-                )
-                comparisons.append(comparison)
-
-            if comparisons:
-                display_compare_table(comparisons, transport_price, config)
-            else:
-                console.print(
-                    f"[bold red]No valid comparisons could be made. Check that resources have market prices at Quality {config.quality}[/bold red]"
-                )
-
-        # Handle genetic algorithm command
-        if args.command == "genetic":
-            # Create simulation config
-            sim_config = SimulationConfig(
-                slots=args.slots,
-                budget=args.budget,
-                population_size=args.population_size,
-                generations=args.generations,
-                mutation_rate=args.mutation_rate,
-                crossover_rate=args.crossover_rate,
-                max_level=args.max_level,
-                elitism=args.elitism,
-                tournament_size=args.tournament_size,
-                budget_penalty_factor=args.budget_penalty_factor,
-            )
-
-            # Create and run genetic algorithm
-            ga = GeneticAlgorithm(
-                config=sim_config,
-                buildings=buildings,
-                resources=filtered_resources,
-                price_map=price_map,
-                q0_price_map=q0_price_map,
-                transport_price=transport_price,
-                name_to_id=name_to_id,
-                abundance=args.abundance,
-                admin_overhead=args.admin_overhead,
-                has_robots=args.robots,
-            )
-
-            console.print("\n[bold blue]Starting Genetic Algorithm Optimization...[/bold blue]\n")
-
-            # Run with progress indicator
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                console=console,
-            ) as progress:
-                task = progress.add_task(
-                    "[cyan]Evolving population...",
-                    total=sim_config.generations,
-                )
-
-                def update_progress(gen: int, best: float, avg: float) -> None:
-                    progress.update(
-                        task,
-                        completed=gen,
-                        description=f"[cyan]Gen {gen}/{sim_config.generations} | Best: ${best:,.0f} | Avg: ${avg:,.0f}",
-                    )
-
-                best_individual, fitness_history = ga.run(progress_callback=update_progress)
-
-            # Display results
-            display_genetic_results(
-                best_individual,
-                fitness_history,
-                sim_config,
-                ga,
-            )
-
-        # Handle analyze command
-        if args.command == "analyze":
-            # Fetch company data
-            company_data = api.get_company(args.user_id)
-            company = company_data.get("company", {})
-
-            if not company:
-                console.print(
-                    f"[bold red]No company data found for user ID {args.user_id}[/bold red]"
-                )
-                return
-
-            # Get buildings from company data
-            company_buildings = company.get("buildings", {})
-
-            if not company_buildings:
-                console.print(
-                    "[bold red]No buildings found in company data[/bold red]"
-                )
-                return
-
-            # Prompt user for building levels
-            building_levels = prompt_building_levels(company_buildings, buildings)
-
-            # Create building ID to Building object lookup
-            id_to_building = {b.id: b for b in buildings}
-
-            # Create building resources lookup using filtered resources
-            # This respects the -e flag to exclude seasonal resources
-            building_resources: dict[str, list[Resource]] = {}
-            for building in buildings:
-                res_list = []
-                for res_name in building.produces:
-                    res = filtered_resource_by_name.get(res_name.lower())
-                    if res:
-                        res_list.append(res)
-                if res_list:
-                    building_resources[building.name] = res_list
-
-            # Calculate building stats
-            building_stats = []
-            buildings_with_levels: list[tuple[Building, int]] = []
-
-            for building_key, level in building_levels.items():
-                # Handle both single and multiple buildings of same type
-                # building_key might be "E" or "E_0", "E_1" etc.
-                if "_" in building_key:
-                    building_id = building_key.rsplit("_", 1)[0]
-                else:
-                    building_id = building_key
-
-                building = id_to_building.get(building_id)
-                if not building:
-                    console.print(
-                        f"[yellow]Warning: Unknown building ID '{building_id}'[/yellow]"
-                    )
-                    continue
-
-                building_res = building_resources.get(building.name, [])
-
-                stat = calculate_company_building_stats(
-                    building=building,
-                    level=level,
-                    resources=building_res,
-                    price_map=price_map,
-                    transport_price=transport_price,
-                    config=config,
-                    q0_price_map=q0_price_map,
-                    name_to_id=name_to_id,
-                )
-                building_stats.append(stat)
-                buildings_with_levels.append((building, level))
-
-            # Display company analysis
-            display_company_analysis(company_data, building_stats, config)
-
-            # Calculate and display upgrade recommendations
-            recommendations = calculate_upgrade_recommendations(
-                buildings_with_levels=buildings_with_levels,
-                building_resources=building_resources,
-                price_map=price_map,
-                transport_price=transport_price,
-                config=config,
-                q0_price_map=q0_price_map,
-                name_to_id=name_to_id,
-            )
-
-            display_upgrade_recommendations(recommendations, config, top_n=args.top_n)
+            handle_lifecycle_command(args, game_data, config)
+        elif args.command == "roi":
+            handle_roi_command(args, game_data, profits, config)
+        elif args.command == "profit":
+            handle_profit_command(args, profits, game_data.price_maps.transport_price, config)
+        elif args.command == "compare":
+            handle_compare_command(args, game_data, config)
+        elif args.command == "genetic":
+            handle_genetic_command(args, game_data, config)
+        elif args.command == "analyze":
+            handle_analyze_command(args, api, game_data, config)
 
     except Exception as exc:
         console.print(f"[bold red]Error fetching data: {exc}[/bold red]")

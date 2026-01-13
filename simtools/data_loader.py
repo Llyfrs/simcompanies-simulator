@@ -69,17 +69,42 @@ def save_json(data: dict | list, filename: str) -> None:
 
 @dataclass
 class PriceMaps:
-    """Container for price maps at different quality levels.
+    """Container for price maps at all quality levels.
+
+    This class stores VWAP prices for all quality levels from the API,
+    allowing access to any quality's prices on demand.
 
     Attributes:
-        current_quality: Price map for the target quality level.
-        quality_zero: Price map for Q0 prices (used for building costs).
+        by_quality: Dictionary mapping quality level to price map.
+                    Each price map is {resource_id: price}.
         transport_price: Price per transport unit.
+        target_quality: The default quality level for convenience access.
     """
 
-    current_quality: dict[int, float]
-    quality_zero: dict[int, float]
+    by_quality: dict[int, dict[int, float]]
     transport_price: float
+    target_quality: int = 0
+
+    @property
+    def current_quality(self) -> dict[int, float]:
+        """Get price map for the target quality level."""
+        return self.by_quality.get(self.target_quality, {})
+
+    @property
+    def quality_zero(self) -> dict[int, float]:
+        """Get price map for Q0 (used for building costs)."""
+        return self.by_quality.get(0, {})
+
+    def get_quality(self, quality: int) -> dict[int, float]:
+        """Get price map for a specific quality level.
+
+        Args:
+            quality: Quality level (0-5).
+
+        Returns:
+            Price map for the requested quality, or empty dict if not found.
+        """
+        return self.by_quality.get(quality, {})
 
 
 def build_price_maps(
@@ -89,16 +114,18 @@ def build_price_maps(
 ) -> PriceMaps:
     """Build price maps from VWAP data.
 
+    Loads all quality levels from the API data into a single structure.
+
     Args:
         vwaps_data: List of VWAP entries from the API.
         raw_resources: List of raw resource data from the API.
-        target_quality: Target quality level for prices.
+        target_quality: Target quality level for default access.
 
     Returns:
-        PriceMaps containing current quality, Q0, and transport prices.
+        PriceMaps containing all quality levels and transport price.
     """
-    price_map: dict[int, float] = {}
-    q0_price_map: dict[int, float] = {}
+    # Build price maps for all quality levels
+    by_quality: dict[int, dict[int, float]] = {}
 
     if isinstance(vwaps_data, list):
         for entry in vwaps_data:
@@ -106,19 +133,18 @@ def build_price_maps(
                 r_id = entry.get("resourceId")
                 quality = entry.get("quality")
                 vwap = entry.get("vwap")
-                if r_id is not None and vwap is not None:
-                    if quality == target_quality:
-                        price_map[int(r_id)] = vwap
-                    if quality == 0:
-                        q0_price_map[int(r_id)] = vwap
+                if r_id is not None and quality is not None and vwap is not None:
+                    if quality not in by_quality:
+                        by_quality[quality] = {}
+                    by_quality[quality][int(r_id)] = vwap
 
     # Get transport price
     transport_price = _get_transport_price(raw_resources, vwaps_data)
 
     return PriceMaps(
-        current_quality=price_map,
-        quality_zero=q0_price_map,
+        by_quality=by_quality,
         transport_price=transport_price,
+        target_quality=target_quality,
     )
 
 

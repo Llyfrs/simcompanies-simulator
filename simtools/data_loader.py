@@ -78,24 +78,12 @@ class PriceMaps:
         by_quality: Dictionary mapping quality level to price map.
                     Each price map is {resource_id: price}.
         transport_price: Price per transport unit.
-        target_quality: The default quality level for convenience access.
     """
 
     by_quality: dict[int, dict[int, float]]
     transport_price: float
-    target_quality: int = 0
 
-    @property
-    def current_quality(self) -> dict[int, float]:
-        """Get price map for the target quality level."""
-        return self.by_quality.get(self.target_quality, {})
-
-    @property
-    def quality_zero(self) -> dict[int, float]:
-        """Get price map for Q0 (used for building costs)."""
-        return self.by_quality.get(0, {})
-
-    def get_quality(self, quality: int) -> dict[int, float]:
+    def get(self, quality: int) -> dict[int, float]:
         """Get price map for a specific quality level.
 
         Args:
@@ -144,7 +132,6 @@ def build_price_maps(
     return PriceMaps(
         by_quality=by_quality,
         transport_price=transport_price,
-        target_quality=target_quality,
     )
 
 

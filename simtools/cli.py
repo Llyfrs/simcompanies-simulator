@@ -99,8 +99,8 @@ def handle_lifecycle_command(
             building=building,
             resource=res,
             profit_config=config,
-            current_prices=game_data.price_maps.current_quality,
-            q0_prices=game_data.price_maps.quality_zero,
+            current_prices=game_data.price_maps.get(config.quality),
+            q0_prices=game_data.price_maps.get(0),
             transport_price=game_data.price_maps.transport_price,
             name_to_id=game_data.name_to_id,
             start_abundance=args.abundance / 100.0,
@@ -141,7 +141,7 @@ def handle_roi_command(
                     calculate_level_roi(
                         building,
                         best_p_data,
-                        game_data.price_maps.quality_zero,
+                        game_data.price_maps.get(0),
                         game_data.name_to_id,
                         max_level=args.max_level,
                         step_mode=args.step_roi,
@@ -153,7 +153,7 @@ def handle_roi_command(
         roi_data = calculate_building_roi(
             game_data.buildings,
             profits,
-            game_data.price_maps.quality_zero,
+            game_data.price_maps.get(0),
             game_data.name_to_id,
         )
         display_roi_table(roi_data)
@@ -200,7 +200,7 @@ def handle_compare_command(
 
     comparisons = []
     for res in search_filtered:
-        market_price = game_data.price_maps.current_quality.get(res.id, 0)
+        market_price = game_data.price_maps.get(config.quality).get(res.id, 0)
         if market_price == 0:
             console.print(
                 f"[yellow]Warning: No market price found for {res.name} "
@@ -212,7 +212,7 @@ def handle_compare_command(
             resource=res,
             market_price=market_price,
             contract_price=args.contract_price,
-            input_prices=game_data.price_maps.current_quality,
+            input_prices=game_data.price_maps.get(config.quality),
             transport_price=game_data.price_maps.transport_price,
             config=config,
         )
@@ -256,8 +256,8 @@ def handle_genetic_command(
         config=sim_config,
         buildings=game_data.buildings,
         resources=filtered_resources,
-        price_map=game_data.price_maps.current_quality,
-        q0_price_map=game_data.price_maps.quality_zero,
+        price_map=game_data.price_maps.get(config.quality),
+        q0_price_map=game_data.price_maps.get(0),
         transport_price=game_data.price_maps.transport_price,
         name_to_id=game_data.name_to_id,
         abundance=args.abundance,
@@ -351,10 +351,10 @@ def handle_analyze_command(
             building=building,
             level=level,
             resources=building_res,
-            price_map=game_data.price_maps.current_quality,
+            price_map=game_data.price_maps.get(config.quality),
             transport_price=game_data.price_maps.transport_price,
             config=config,
-            q0_price_map=game_data.price_maps.quality_zero,
+            q0_price_map=game_data.price_maps.get(0),
             name_to_id=game_data.name_to_id,
         )
         building_stats.append(stat)
@@ -365,10 +365,10 @@ def handle_analyze_command(
     recommendations = calculate_upgrade_recommendations(
         buildings_with_levels=buildings_with_levels,
         building_resources=building_resources,
-        price_map=game_data.price_maps.current_quality,
+        price_map=game_data.price_maps.get(config.quality),
         transport_price=game_data.price_maps.transport_price,
         config=config,
-        q0_price_map=game_data.price_maps.quality_zero,
+        q0_price_map=game_data.price_maps.get(0),
         name_to_id=game_data.name_to_id,
     )
 
@@ -489,7 +489,7 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    # Add common flags at top level for backwards compatibility
+    # Common arguments available at top level (for default 'profit' command)
     parser.add_argument("-q", "--quality", type=int, default=0, help="Quality level (default: 0)")
     parser.add_argument("-a", "--abundance", type=float, default=90, help="Abundance percentage")
     parser.add_argument("-c", "--contract", action="store_true", help="Direct contract mode")
@@ -559,7 +559,7 @@ def main() -> None:
         # Calculate profits for commands that need them
         profits = calculate_all_profits(
             filtered_resources,
-            game_data.price_maps.current_quality,
+            game_data.price_maps.get(config.quality),
             game_data.price_maps.transport_price,
             config,
         )

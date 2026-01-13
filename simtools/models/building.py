@@ -90,17 +90,6 @@ class Building:
 
         return [cls.from_dict(b) for b in data]
 
-    def get_resources(self) -> list[Resource]:
-        """Get the resolved Resource objects for this building.
-
-        Returns:
-            List of Resource instances that this building produces.
-
-        Note:
-            This method is deprecated. Use the `resources` property instead.
-        """
-        return self._resources
-
     def link_resources(self, resources: dict[str, Resource]) -> None:
         """Link this building to its Resource objects.
 

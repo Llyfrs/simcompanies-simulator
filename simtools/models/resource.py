@@ -283,48 +283,33 @@ class Resource:
             }
 
         # Calculate units sold per hour using Sim Companies retail demand curve.
-        # The formula is derived from: Time (seconds) = C × (Price × Saturation - Adjustment)
-        # where C is a product-specific constant.
         #
-        # Since modeledUnitsSoldAnHour represents units at saturation = 1.0:
-        #   modeled_units = 3600 / (C × (Price × 1.0 - Adjustment))
-        #   actual_units = 3600 / (C × (Price × Saturation - Adjustment))
+        # Based on Sim Companies game mechanics, the time to sell one unit increases
+        # quadratically with saturation. The formula is:
         #
-        # Therefore:
-        #   actual_units = modeled_units × (Price - Adjustment) / (Price × Saturation - Adjustment)
+        #   Time (seconds) = ((Price × A) + (Saturation - 0.5) / B - C)² × D + E
         #
-        # - When saturation = 1.0: actual_units = modeled_units (no change)
-        # - When saturation > 1.0 (oversupply): demand factor increases, units decrease
-        # - When saturation < 1.0 (undersupply): demand factor decreases, units increase
-        if modeled_units > 0:
-            base_demand = retail_price - retail_adjustment
-            actual_demand = (retail_price * saturation) - retail_adjustment
-            
-            if actual_demand > 0 and base_demand > 0:
-                saturation_ratio = base_demand / actual_demand
-                units_sold_per_hour = (
-                    modeled_units
-                    * saturation_ratio
-                    * building_level
-                    * (1.0 + sales_speed_bonus)
-                )
-            else:
-                # Edge case: if demand factors are zero or negative
-                # (e.g., retailAdjustment >= retail_price), no sales possible
-                return {
-                    "name": f"{self.name} (Retail)",
-                    "profit_per_hour": 0.0,
-                    "revenue_per_hour": 0.0,
-                    "wages_per_hour": 0.0,
-                    "units_sold_per_hour": 0.0,
-                    "revenue_less_wages_per_unit": 0.0,
-                    "retail_price": retail_price,
-                    "missing_input_price": False,  # Price is available, just unfavorable market
-                    "is_abundance_res": False,
-                    "market_fee_per_hour": 0.0,
-                    "costs_per_hour": 0.0,
-                    "transport_costs_per_hour": 0.0,
-                }
+        # where A, B, C, D, E are hidden game constants unique to each resource.
+        #
+        # Since modeledUnitsSoldAnHour represents units at saturation = 1.0, and
+        # time scales approximately with saturation², we use:
+        #
+        #   actual_units = modeled_units / saturation²
+        #
+        # This gives us:
+        # - When saturation = 1.0: actual_units = modeled_units (baseline)
+        # - When saturation > 1.0 (oversupply): slower sales (units decrease)
+        # - When saturation < 1.0 (undersupply): faster sales (units increase)
+        #
+        # The building_level multiplier represents having more retail slots.
+        # The sales_speed_bonus represents perks or bonuses that increase sales speed.
+        if modeled_units > 0 and saturation > 0:
+            units_sold_per_hour = (
+                modeled_units
+                / (saturation ** 2)
+                * building_level
+                * (1.0 + sales_speed_bonus)
+            )
         else:
             return {
                 "name": f"{self.name} (Retail)",

@@ -1349,9 +1349,14 @@ def main() -> None:
                     best_profit = -float("inf")
                     best_p_data = None
                     for res_name in building.produces:
-                        res_name_lower = res_name.lower()
-                        if res_name_lower in res_profit_map:
-                            p_data = res_profit_map[res_name_lower]
+                        # For retail buildings, look for the retail version
+                        if building.retail:
+                            lookup_name = f"{res_name} (Retail)".lower()
+                        else:
+                            lookup_name = res_name.lower()
+                        
+                        if lookup_name in res_profit_map:
+                            p_data = res_profit_map[lookup_name]
                             if p_data["profit_per_hour"] > best_profit:
                                 best_profit = p_data["profit_per_hour"]
                                 best_p_data = p_data
